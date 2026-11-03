@@ -128,10 +128,8 @@ fn register(s: &str) -> bool {
 fn neutral(n: &Node, at: &str) -> ContractResult<()> {
     match n {
         Node::Number(num) => {
-            if !num.as_u64().is_some_and(|v| v <= MAX_INTEGER)
-                && !num
-                    .as_i64()
-                    .is_some_and(|v| v.unsigned_abs() <= MAX_INTEGER)
+            if num.as_u64().is_none_or(|v| v > MAX_INTEGER)
+                && num.as_i64().is_none_or(|v| v.unsigned_abs() > MAX_INTEGER)
             {
                 return Err(invalid(
                     at,
@@ -286,7 +284,8 @@ fn model(n: &Node, id: Option<&str>, at: &str) -> ContractResult<()> {
             ));
         }
     }
-    let mappings = field(n, "mappings", at)?;
+    let empty = Node::Object(vec![]);
+    let mappings = n.get("mappings").unwrap_or(&empty);
     object(mappings, &pointer(at, "mappings"))?;
     for (format, mapping) in mappings.object().unwrap() {
         let loc = pointer(&pointer(at, "mappings"), format);

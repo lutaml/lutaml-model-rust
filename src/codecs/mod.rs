@@ -44,6 +44,7 @@ fn rules(model: &ModelDocument) -> Vec<KeyRule> {
                     key: vec![a.name.clone()],
                     to: a.name.clone(),
                     render: None,
+                    ..Default::default()
                 })
                 .collect()
         })
@@ -68,7 +69,30 @@ fn keyed<'a>(
     let Some(mapping) = &model.mappings.json else {
         return Ok(None);
     };
-    let (root, descriptor) = match (&mapping.root_mappings, &mapping.child_mappings) {
+    let declarations: Vec<_> = mapping
+        .rules
+        .iter()
+        .filter(|r| r.root_mappings.is_some() || r.child_mappings.is_some())
+        .collect();
+    if declarations.len() > 1 {
+        return Err(fail(
+            id,
+            "",
+            "multiple keyed rule descriptors are not implemented",
+        ));
+    }
+    let rule = declarations.first().copied();
+    if rule.is_some() && (mapping.root_mappings.is_some() || mapping.child_mappings.is_some()) {
+        return Err(fail(
+            id,
+            "",
+            "conflicting rule and format keyed descriptors",
+        ));
+    }
+    let (roots, children) = rule
+        .map(|r| (&r.root_mappings, &r.child_mappings))
+        .unwrap_or((&mapping.root_mappings, &mapping.child_mappings));
+    let (root, descriptor) = match (roots, children) {
         (None, None) => return Ok(None),
         (Some(d), None) => (true, d),
         (None, Some(d)) => (false, d),
@@ -81,6 +105,7 @@ fn keyed<'a>(
             matches!(a.collection, Collection::Bounded { .. })
                 && target(a).is_some()
                 && mapping.rules.iter().any(|r| r.to == a.name)
+                && rule.is_none_or(|r| r.to == a.name)
         })
         .collect();
     if candidates.len() != 1 || (root && mapping.rules.len() != 1) {
@@ -175,7 +200,13 @@ fn aliases(model: &ModelDocument, id: &str) -> ContractResult<Vec<KeyRule>> {
     let mut keys = BTreeSet::new();
     let mut members = BTreeSet::new();
     for rule in &rules {
-        if rule.key.is_empty()
+        if (rule.key.is_empty()
+            && rule.root_mappings.is_none()
+            && model
+                .mappings
+                .json
+                .as_ref()
+                .is_none_or(|m| m.root_mappings.is_none()))
             || !members.insert(rule.to.clone())
             || !model.attributes.iter().any(|a| a.name == rule.to)
         {
@@ -254,19 +285,52 @@ fn member(
     out.push_str("}\n");
     Ok(())
 }
+fn resolved(value: &RenderAction, affirmative: RenderAction) -> RenderAction {
+    match value {
+        RenderAction::Absent | RenderAction::Boolean(false) => RenderAction::Omit,
+        RenderAction::Boolean(true) => affirmative,
+        v => v.clone(),
+    }
+}
+fn check_rule(rule: &KeyRule, id: &str) -> ContractResult<()> {
+    if rule.namespace != Namespace::Inherit
+        || !matches!(rule.kind, XmlRuleKind::Unspecified)
+        || rule.name.is_some()
+        || rule.prefix.is_some()
+        || rule.cdata.is_some()
+        || rule.members.is_some()
+        || rule.min.is_some()
+        || rule.max.is_some()
+        || rule.polymorphic_map.is_some()
+    {
+        return Err(fail(id, &rule.to, "unsupported JSON rule metadata"));
+    }
+    if let Some(policy) = &rule.render {
+        if matches!(policy.nil, RenderAction::Other(_))
+            || matches!(policy.empty, RenderAction::Other(_))
+            || !matches!(
+                policy.default,
+                RenderAction::Absent | RenderAction::Boolean(_)
+            )
+        {
+            return Err(fail(id, &rule.to, "unsupported render policy"));
+        }
+    }
+    Ok(())
+}
 fn policy(out: &mut String, rule: &KeyRule, a: &Attribute) {
     let default = RenderPolicy {
         nil: RenderAction::Omit,
         empty: RenderAction::Omit,
-        default: false,
+        default: false.into(),
     };
     let p = rule.render.as_ref().unwrap_or(&default);
-    if !p.default {
+    if !matches!(p.default, RenderAction::Boolean(true)) {
         if let DefaultValue::Present(v) = &a.default {
             writeln!(out,"if v==serde_json::from_str::<Value>({}).expect(\"generated literal\") {{ continue; }}",q(&serde_json::to_string(v).unwrap())).unwrap();
         }
     }
-    match p.nil {
+    match resolved(&p.nil, RenderAction::Nil) {
         RenderAction::Omit => out.push_str("if v.is_null(){continue;}\n"),
         RenderAction::Blank | RenderAction::AsBlank => {
             let blank = if matches!(a.collection, Collection::Bounded { .. }) {
@@ -278,7 +342,7 @@ fn policy(out: &mut String, rule: &KeyRule, a: &Attribute) {
         }
         _ => {}
     }
-    match p.empty {
+    match resolved(&p.empty, RenderAction::Blank) {
         RenderAction::Omit => out.push_str("if empty(&v){continue;}\n"),
         RenderAction::Nil | RenderAction::AsNil => out.push_str("if empty(&v){v=Value::Null;}\n"),
         _ => {}
@@ -305,7 +369,23 @@ impl JsonCodecEmitter for RustJsonEmitter {
         let mut out = include_str!("runtime.rs.txt").to_owned();
         for (id, model) in &bundle.models {
             let name = &names[id];
+            if model
+                .mappings
+                .json
+                .as_ref()
+                .is_some_and(|m| m.root.is_some() || m.namespace.is_some())
+            {
+                return Err(fail(
+                    id,
+                    "",
+                    "JSON root/namespace metadata is not implemented",
+                ));
+            }
             let rules = aliases(model, id)?;
+            for rule in &rules {
+                check_rule(rule, id)?;
+            }
+
             let keyed = keyed(model, bundle, id)?;
             writeln!(out,"#[allow(non_snake_case)]\npub fn read_{name}_json(input:&str)->ContractResult<{name}>{{let data=decode_{name}(parse_json(input,{})?)?; let model:{name}=serde_json::from_value(data).map_err(|e|failure(ErrorReason::InvalidDocument,{}, \"\", \"/input\",e))?; model.validate().map_err(|e|failure(ErrorReason::InvalidDocument,e.model_id,e.attribute,\"/input\",e.reason))?;Ok(model)}}",q(id),q(id)).unwrap();
             writeln!(out,"#[allow(non_snake_case)]\npub fn write_{name}_json(model:&{name})->ContractResult<String>{{model.validate().map_err(|e|failure(ErrorReason::InvalidDocument,e.model_id,e.attribute,\"/output\",e.reason))?;let data=serde_json::to_value(model).map_err(|e|failure(ErrorReason::InvalidDocument,{}, \"\", \"/output\",e))?;serde_json::to_string(&encode_{name}(data)?).map_err(|e|failure(ErrorReason::InvalidDocument,{}, \"\", \"/output\",e))}}",q(id),q(id)).unwrap();

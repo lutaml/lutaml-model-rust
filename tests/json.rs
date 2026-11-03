@@ -36,6 +36,7 @@ fn model(name: &str, attributes: Vec<Attribute>, rules: Vec<KeyRule>) -> ModelDo
                 rules,
                 root_mappings: None,
                 child_mappings: None,
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -55,8 +56,9 @@ fn rule(
         render: Some(RenderPolicy {
             nil,
             empty,
-            default,
+            default: default.into(),
         }),
+        ..Default::default()
     }
 }
 fn keep(name: &str, aliases: &[&str]) -> KeyRule {
@@ -162,6 +164,16 @@ fn fixture() -> Bundle {
         ),
         ("amount".into(), NeutralValue::String("price".into())),
     ]));
+    let root_paths = root.mappings.json.as_mut().unwrap().root_mappings.take();
+    root.mappings.json.as_mut().unwrap().rules[0].root_mappings = root_paths;
+    let child_paths = children
+        .mappings
+        .json
+        .as_mut()
+        .unwrap()
+        .child_mappings
+        .take();
+    children.mappings.json.as_mut().unwrap().rules[0].child_mappings = child_paths;
     Bundle {
         lml_bundle: 1,
         roots: vec!["Record@default".into()],
@@ -211,6 +223,11 @@ fn generation_is_deterministic_and_rejects_ambiguous_aliases() {
 fn ambiguous_keyed_descriptors_reject_without_artifacts() {
     let mut b = fixture();
     let m = b.models.get_mut("Children@default").unwrap();
+    let descriptor = m.mappings.json.as_mut().unwrap().rules[0]
+        .child_mappings
+        .take();
+    m.mappings.json.as_mut().unwrap().child_mappings = descriptor;
+
     let mut a = m.attributes[0].clone();
     a.name = "other".into();
     m.attributes.push(a);
@@ -239,6 +256,7 @@ fn overlapping_keyed_paths_and_custom_codec_signatures_reject() {
         .json
         .as_mut()
         .unwrap()
+        .rules[0]
         .child_mappings
         .as_mut()
         .unwrap();
@@ -449,6 +467,32 @@ fn emitted_consumer_compiles_and_executes_json_behavior() {
     let mut b = fixture();
     let (oracle_bundle, oracle_cases) = pinned_oracle();
     b.models.extend(oracle_bundle.models);
+    let mut preservation = lml::load(
+        include_bytes!("../src/lml/fixtures/02d-preservation.schema.json"),
+        InputFormat::Json,
+    )
+    .unwrap()
+    .bundle()
+    .unwrap();
+    b.models.insert(
+        "LmlPreservation::TypedEnum@default".into(),
+        preservation
+            .models
+            .remove("LmlPreservation::TypedEnum@default")
+            .unwrap(),
+    );
+    let mut integer = attribute("number", BuiltinType::Integer);
+    integer.default =
+        DefaultValue::Present(NeutralValue::String("009007199254740993123456789".into()));
+    integer.enumeration = Some(vec![
+        NeutralValue::String("9007199254740993123456789".into()),
+        NeutralValue::Signed(2),
+    ]);
+    b.models.insert(
+        "BigEnum@default".into(),
+        model("BigEnum", vec![integer], vec![keep("number", &["number"])]),
+    );
+
     let models = generator::RustEmitter
         .generate_models(&b, &TypeBindings::new())
         .unwrap();
@@ -502,5 +546,29 @@ num-traits="=0.2.19"
         String::from_utf8_lossy(&result.stderr)
     );
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("8 passed"), "{stdout}");
+    assert!(stdout.contains("9 passed"), "{stdout}");
+}
+
+#[test]
+fn admitted_unknown_render_policies_are_named_codegen_refusals() {
+    let mut b = fixture();
+    b.models
+        .get_mut("Item@default")
+        .unwrap()
+        .mappings
+        .json
+        .as_mut()
+        .unwrap()
+        .rules[0]
+        .render
+        .as_mut()
+        .unwrap()
+        .nil = RenderAction::Other("unknown-native-policy".into());
+    assert_eq!(
+        RustJsonEmitter
+            .generate_json_codecs(&b, &TypeBindings::new())
+            .unwrap_err()
+            .reason,
+        ErrorReason::UnsupportedMapping
+    );
 }

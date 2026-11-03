@@ -56,9 +56,11 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
     let typ = field(n, "type", at)?;
     type_ref(typ, &pointer(at, "type"))?;
     for key in ["required", "initialize_empty"] {
-        boolean(field(n, key, at)?, &pointer(at, key))?;
+        if let Some(value) = n.get(key) {
+            boolean(value, &pointer(at, key))?;
+        }
     }
-    let collection = field(n, "collection", at)?;
+    let collection = n.get("collection").unwrap_or(&Node::Bool(false));
     if collection != &Node::Bool(false) {
         keys(
             collection,
@@ -70,7 +72,8 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
             string(c, &format!("{at}/collection/class"))?;
         }
     }
-    let default = field(n, "default", at)?;
+    let absent = Node::Object(vec![("present".into(), Node::Bool(false))]);
+    let default = n.get("default").unwrap_or(&absent);
     let loc = pointer(at, "default");
     if default.get("proc").is_some() || default.get("lambda").is_some() {
         return Err(failure(
@@ -107,14 +110,17 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
     if let Some(values) = n.get("enum").or_else(|| n.get("values")) {
         let mut seen = Vec::new();
         for (i, value) in array(values, &pointer(at, "enum"))?.iter().enumerate() {
-            typed_value(value, typ, &format!("{at}/enum/{i}"))?;
+            enum_value(value, typ, &format!("{at}/values/{i}"))?;
             if seen.contains(&value) {
                 return Err(invalid(&pointer(at, "enum"), "duplicate enum value"));
             }
             seen.push(value);
         }
         if let Some(value) = default.get("value") {
-            if value != &Node::Null && collection == &Node::Bool(false) && !seen.contains(&value) {
+            if value != &Node::Null
+                && collection == &Node::Bool(false)
+                && !seen.iter().any(|entry| enum_equal(value, entry, typ))
+            {
                 return Err(failure(
                     ErrorReason::NonSerializableDefault,
                     &loc,
@@ -190,6 +196,35 @@ pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<
         ));
     }
     Ok(())
+}
+fn enum_equal(a: &Node, b: &Node, typ: &Node) -> bool {
+    if a == b {
+        return true;
+    }
+    if typ.get("name").and_then(Node::string) != Some("integer") {
+        return false;
+    }
+    let integer = |value: &Node| -> Option<num_bigint::BigInt> {
+        match value {
+            Node::String(s) => s.parse().ok(),
+            Node::Number(v) => v
+                .as_i64()
+                .map(num_bigint::BigInt::from)
+                .or_else(|| v.as_u64().map(num_bigint::BigInt::from)),
+            _ => None,
+        }
+    };
+    matches!((integer(a),integer(b)),(Some(a),Some(b))if a==b)
+}
+/// Integer enum literals are typed schema metadata, not instance wire values.
+/// Their bounded JSON integer spelling remains numeric in the immutable tree.
+pub(super) fn enum_value(value: &Node, typ: &Node, at: &str) -> ContractResult<()> {
+    if typ.get("name").and_then(Node::string) == Some("integer")
+        && matches!(value,Node::Number(v) if v.as_i64().is_some()||v.as_u64().is_some())
+    {
+        return Ok(());
+    }
+    typed_value(value, typ, at)
 }
 pub(super) fn value_type(n: &Node, at: &str) -> ContractResult<()> {
     keys(n, &["base", "facets"], at)?;
@@ -334,7 +369,12 @@ pub(super) fn validate_member(
             typed_value(value, typ, at)?;
         }
         if let Some(values) = attr.get("enum").or_else(|| attr.get("values")) {
-            if !values.array().unwrap().contains(value) {
+            if !values
+                .array()
+                .unwrap()
+                .iter()
+                .any(|entry| enum_equal(value, entry, typ))
+            {
                 return Err(failure(
                     ErrorReason::NonSerializableDefault,
                     at,
@@ -344,7 +384,10 @@ pub(super) fn validate_member(
         }
         Ok(())
     };
-    if attr.get("collection") == Some(&Node::Bool(false)) {
+    if attr
+        .get("collection")
+        .is_none_or(|v| v == &Node::Bool(false))
+    {
         validate_one(value, at)
     } else {
         let items = array(value, at)?;
