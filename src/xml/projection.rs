@@ -92,6 +92,142 @@ fn compositor(
     Ok(())
 }
 
+fn grouped_fields<'a>(
+    id: &str,
+    groups: &'a [XmlRule],
+    rules: &mut Vec<&'a XmlRule>,
+    at: &str,
+) -> ContractResult<()> {
+    for (i, group) in groups.iter().enumerate() {
+        let location = format!("{at}/{i}");
+        if matches!(group.kind, XmlRuleKind::Sequence | XmlRuleKind::Choice) {
+            let members = group.members.as_ref().ok_or_else(|| {
+                error(
+                    id,
+                    ErrorReason::UnsupportedMapping,
+                    &location,
+                    "group members missing",
+                )
+            })?;
+            grouped_fields(id, members, rules, &format!("{location}/members"))?;
+        } else {
+            if group.kind != XmlRuleKind::Element {
+                return Err(error(
+                    id,
+                    ErrorReason::UnsupportedMapping,
+                    &location,
+                    "compositor requires element rules",
+                ));
+            }
+            if let Some(existing) = rules.iter().find(|r| r.to == group.to) {
+                // Legacy attribute-name compositors normalize to a reference-only rule.
+                if group.name.is_some() && *existing != group {
+                    return Err(error(
+                        id,
+                        ErrorReason::UnsupportedMapping,
+                        &location,
+                        "conflicting grouped field metadata",
+                    ));
+                }
+            } else if group.name.is_none() {
+                return Err(error(
+                    id,
+                    ErrorReason::UnsupportedMapping,
+                    &location,
+                    "legacy compositor member is not mapped",
+                ));
+            } else {
+                rules.push(group);
+            }
+        }
+    }
+    Ok(())
+}
+fn lower_group(id: &str, group: &XmlRule, at: &str) -> ContractResult<Compositor> {
+    if group.name.is_some()
+        || !group.to.is_empty()
+        || !group.key.is_empty()
+        || group.namespace != Namespace::Inherit
+        || group.prefix.is_some()
+        || group.cdata.is_some()
+        || group.render.is_some()
+        || group.discriminator.is_some()
+        || group.root_mappings.is_some()
+        || group.child_mappings.is_some()
+        || group.polymorphic_map.is_some()
+    {
+        return Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            at,
+            "unsupported compositor metadata",
+        ));
+    }
+    let number = |value: &NeutralValue| match value {
+        NeutralValue::Unsigned(v) => Some(*v),
+        NeutralValue::Signed(v) => u64::try_from(*v).ok(),
+        _ => None,
+    };
+    let min = match &group.min {
+        None => 1,
+        Some(v) => number(v).ok_or_else(|| {
+            error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                at,
+                "compositor minimum",
+            )
+        })?,
+    };
+    let max = match &group.max {
+        None => Some(1),
+        Some(NeutralValue::Null) => None,
+        Some(v) => Some(number(v).ok_or_else(|| {
+            error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                at,
+                "compositor maximum",
+            )
+        })?),
+    };
+    let members = group
+        .members
+        .as_ref()
+        .ok_or_else(|| {
+            error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                at,
+                "compositor members",
+            )
+        })?
+        .iter()
+        .enumerate()
+        .map(|(i, rule)| {
+            if matches!(rule.kind, XmlRuleKind::Sequence | XmlRuleKind::Choice) {
+                Ok(CompositorMember::Group(Box::new(lower_group(
+                    id,
+                    rule,
+                    &format!("{at}/members/{i}"),
+                )?)))
+            } else {
+                Ok(CompositorMember::Attribute(rule.to.clone()))
+            }
+        })
+        .collect::<ContractResult<Vec<_>>>()?;
+    match group.kind {
+        XmlRuleKind::Sequence => Ok(Compositor::Sequence { members, min, max }),
+        XmlRuleKind::Choice => Ok(Compositor::Choice { members, min, max }),
+        _ => Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            at,
+            "expected compositor",
+        )),
+    }
+}
+
 /// Compile only the requested model. Bundle loading/graph validation remains the
 /// loader's responsibility; referenced discriminator targets are checked here.
 pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projection> {
@@ -107,6 +243,39 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
         .as_ref()
         .ok_or_else(|| error(id, ErrorReason::UnsupportedFormat, &path, "xml"))?;
     namespace(id, &mapping.namespace, &format!("{path}/namespace"))?;
+    if mapping.root_mappings.is_some() || mapping.child_mappings.is_some() {
+        return Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            &path,
+            "XML keyed mapping metadata is not implemented",
+        ));
+    }
+    if mapping
+        .root
+        .as_ref()
+        .is_some_and(|r| !r.metadata.is_empty())
+    {
+        return Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            &format!("{path}/root"),
+            "unsupported XML root metadata",
+        ));
+    }
+    if (mapping.ordered == Some(true)
+        || mapping.mixed_content == Some(true)
+        || mapping.root.as_ref().is_some_and(|r| r.mixed == Some(true)))
+        && model.ordered_content.is_none()
+    {
+        return Err(error(
+            id,
+            ErrorReason::InvalidOrderedContent,
+            &path,
+            "ordered/mixed flags require portable instance tokens",
+        ));
+    }
+
     if mapping.root.as_ref().is_some_and(|r| r.element.is_empty()) {
         return Err(error(
             id,
@@ -126,7 +295,51 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
     }];
     let mut element_members = BTreeSet::new();
     let mut mapped = BTreeSet::new();
-    for (index, rule) in mapping.rules.iter().enumerate() {
+    let mut rules: Vec<_> = mapping
+        .rules
+        .iter()
+        .filter(|r| !matches!(r.kind, XmlRuleKind::Sequence | XmlRuleKind::Choice))
+        .collect();
+    let mut groups: Vec<XmlRule> = mapping
+        .rules
+        .iter()
+        .filter(|r| matches!(r.kind, XmlRuleKind::Sequence | XmlRuleKind::Choice))
+        .cloned()
+        .collect();
+    if let Some(sequence) = &mapping.sequence {
+        groups.extend(sequence.iter().cloned());
+    }
+    for (index, rule) in rules.iter().enumerate() {
+        if !attributes.contains_key(rule.to.as_str()) {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{path}/rules/{index}/to"),
+                &rule.to,
+            ));
+        }
+    }
+    grouped_fields(id, &groups, &mut rules, &format!("{path}/sequence"))?;
+    for (index, rule) in rules.iter().enumerate() {
+        if !matches!(
+            rule.kind,
+            XmlRuleKind::Attribute | XmlRuleKind::Element | XmlRuleKind::Content
+        ) || !rule.key.is_empty()
+            || rule.members.is_some()
+            || rule.min.is_some()
+            || rule.max.is_some()
+            || rule.root_mappings.is_some()
+            || rule.child_mappings.is_some()
+            || rule.polymorphic_map.is_some()
+        {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{path}/rules/{index}"),
+                "unsupported XML field metadata",
+            ));
+        }
+
         let location = format!("{path}/rules/{index}");
         let attribute = attributes.get(rule.to.as_str()).ok_or_else(|| {
             error(
@@ -211,29 +424,14 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
             discriminator: selected.cloned(),
         })));
     }
-    if let Some(group) = &mapping.sequence {
-        if !matches!(group, Compositor::Sequence { .. }) {
-            return Err(error(
-                id,
-                ErrorReason::UnsupportedMapping,
-                &format!("{path}/sequence"),
-                "sequence",
-            ));
-        }
-        compositor(id, group, &element_members, &format!("{path}/sequence"))?;
-        operations.push(Operation::Sequence(group.clone()));
-    }
-    if let Some(group) = &mapping.choice {
-        if !matches!(group, Compositor::Choice { .. }) {
-            return Err(error(
-                id,
-                ErrorReason::UnsupportedMapping,
-                &format!("{path}/choice"),
-                "choice",
-            ));
-        }
-        compositor(id, group, &element_members, &format!("{path}/choice"))?;
-        operations.push(Operation::Choice(group.clone()));
+    for (index, group) in groups.iter().enumerate() {
+        let location = format!("{path}/sequence/{index}");
+        let lowered = lower_group(id, group, &location)?;
+        compositor(id, &lowered, &element_members, &location)?;
+        operations.push(match lowered {
+            Compositor::Sequence { .. } => Operation::Sequence(lowered),
+            Compositor::Choice { .. } => Operation::Choice(lowered),
+        });
     }
     if let Some(order) = &model.ordered_content {
         if attributes.contains_key("__lml_content") {
@@ -317,9 +515,9 @@ pub fn validate_order<'a>(
             .ok_or_else(|| fail(position, member))?;
         if (element && field.kind != XmlRuleKind::Element)
             || (!element && field.kind != XmlRuleKind::Content)
-            || !counts
+            || counts
                 .get(member)
-                .is_some_and(|count| (*index as u128) < (*count as u128))
+                .is_none_or(|count| (*index as u128) >= (*count as u128))
             || !seen.insert((member, index))
         {
             return Err(fail(position, member));

@@ -195,6 +195,17 @@ impl ModelEmitter for RustEmitter {
     ) -> ContractResult<SourceMap> {
         let names = model_names(bundle)?;
         let mut output = include_str!("runtime.rs.txt").to_owned();
+        if bundle.models.values().flat_map(|m| &m.attributes).any(|a| {
+            a.enumeration.is_some()
+                && matches!(
+                    a.value_type,
+                    TypeRef::Builtin {
+                        name: BuiltinType::Integer
+                    }
+                )
+        }) {
+            output.push_str("fn same_integer(a:&ExactInteger,b:&ExactInteger)->bool { fn parts(s:&str)->(bool,&str) { let negative=s.starts_with('-'); let digits=s.trim_start_matches(['-','+']).trim_start_matches('0'); (negative&&!digits.is_empty(),digits) } parts(a.as_str())==parts(b.as_str()) }\n");
+        }
         let mut type_names: BTreeSet<String> = names.values().cloned().collect();
         for (id, m) in &bundle.models {
             if let Some(ordered) = &m.ordered_content {
@@ -205,6 +216,42 @@ impl ModelEmitter for RustEmitter {
                         "__lml_content",
                         "unsupported ordered-content declaration",
                     ));
+                }
+            }
+            let ordered = m.mappings.xml.as_ref().is_some_and(|v| {
+                v.ordered == Some(true)
+                    || v.mixed_content == Some(true)
+                    || v.root.as_ref().is_some_and(|r| r.mixed == Some(true))
+            }) || m
+                .mappings
+                .json
+                .iter()
+                .chain(m.mappings.yaml.iter())
+                .any(|v| v.ordered == Some(true) || v.mixed_content == Some(true));
+            if ordered && m.ordered_content.is_none() {
+                return Err(error(
+                    ErrorReason::InvalidOrderedContent,
+                    id,
+                    "__lml_content",
+                    "ordered/mixed declarations require portable instance tokens",
+                ));
+            }
+            for rule in m
+                .mappings
+                .json
+                .iter()
+                .chain(m.mappings.yaml.iter())
+                .flat_map(|mapping| &mapping.rules)
+            {
+                if let Some(d) = &rule.discriminator {
+                    if m.attributes
+                        .iter()
+                        .find(|a| a.name == rule.to)
+                        .and_then(|a| a.discriminator.as_ref())
+                        != Some(d)
+                    {
+                        return Err(error(ErrorReason::UnsupportedMapping,id,&rule.to,"rule-level discriminator needs an identical typed attribute discriminator"));
+                    }
                 }
             }
             let name = &names[id];
@@ -311,10 +358,11 @@ impl ModelEmitter for RustEmitter {
                 }
                 if let Some(values) = &a.enumeration {
                     if values.is_empty()
-                        || values
-                            .iter()
-                            .enumerate()
-                            .any(|(i, v)| values[..i].contains(v))
+                        || values.iter().enumerate().any(|(i, v)| {
+                            values[..i]
+                                .iter()
+                                .any(|entry| same_enum_literal(a, entry, v))
+                        })
                     {
                         return Err(error(
                             ErrorReason::InvalidDocument,
@@ -325,7 +373,7 @@ impl ModelEmitter for RustEmitter {
                     }
                     // Validate each literal against the declared scalar before emitting.
                     for value in values {
-                        validate_literal(a, value, id, bundle)?;
+                        validate_literal(a, &enum_literal(a, value), id, bundle)?;
                     }
                     let en = format!("{name}_{}_Enum", member_identifier(&a.name));
                     if !type_names.insert(en.clone()) {
@@ -343,12 +391,22 @@ impl ModelEmitter for RustEmitter {
                     output.push_str("}\n");
                     writeln!(output,"impl Serialize for {en} {{ fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{{ match self {{").unwrap();
                     for (index, v) in values.iter().enumerate() {
-                        writeln!(output,"Self::Case{index} => {{ let v:{ty}=serde_json::from_str({}).map_err(serde::ser::Error::custom)?; v.serialize(s) }},",quote(&serde_json::to_string(v).unwrap())).unwrap();
+                        writeln!(output,"Self::Case{index} => {{ let v:{ty}=serde_json::from_str({}).map_err(serde::ser::Error::custom)?; v.serialize(s) }},",quote(&serde_json::to_string(&enum_literal(a,v)).unwrap())).unwrap();
                     }
                     output.push_str("} } }\n");
                     writeln!(output,"impl<'de> Deserialize<'de> for {en} {{ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{{ let v={ty}::deserialize(d)?;").unwrap();
                     for (index, v) in values.iter().enumerate() {
-                        writeln!(output,"if v == serde_json::from_str::<{ty}>({}).map_err(serde::de::Error::custom)? {{ return Ok(Self::Case{index}); }}",quote(&serde_json::to_string(v).unwrap())).unwrap();
+                        let literal = quote(&serde_json::to_string(&enum_literal(a, v)).unwrap());
+                        if matches!(
+                            a.value_type,
+                            TypeRef::Builtin {
+                                name: BuiltinType::Integer
+                            }
+                        ) {
+                            writeln!(output,"if same_integer(&v,&serde_json::from_str::<{ty}>({literal}).map_err(serde::de::Error::custom)?) {{ return Ok(Self::Case{index}); }}").unwrap();
+                        } else {
+                            writeln!(output,"if v == serde_json::from_str::<{ty}>({literal}).map_err(serde::de::Error::custom)? {{ return Ok(Self::Case{index}); }}").unwrap();
+                        }
                     }
                     output.push_str("Err(serde::de::Error::custom(\"invalid enum value\")) } }\n");
                     ty = en;
@@ -471,6 +529,36 @@ impl ModelEmitter for RustEmitter {
         Ok(BTreeMap::from([("models.rs".into(), output)]))
     }
 }
+fn same_enum_literal(a: &Attribute, left: &NeutralValue, right: &NeutralValue) -> bool {
+    let left = enum_literal(a, left);
+    let right = enum_literal(a, right);
+    if matches!(
+        a.value_type,
+        TypeRef::Builtin {
+            name: BuiltinType::Integer
+        }
+    ) {
+        if let (NeutralValue::String(left), NeutralValue::String(right)) = (&left, &right) {
+            return matches!((left.parse::<num_bigint::BigInt>(),right.parse::<num_bigint::BigInt>()),(Ok(left),Ok(right))if left==right);
+        }
+    }
+    left == right
+}
+fn enum_literal(a: &Attribute, value: &NeutralValue) -> NeutralValue {
+    if matches!(
+        a.value_type,
+        TypeRef::Builtin {
+            name: BuiltinType::Integer
+        }
+    ) {
+        match value {
+            NeutralValue::Signed(v) => return NeutralValue::String(v.to_string()),
+            NeutralValue::Unsigned(v) => return NeutralValue::String(v.to_string()),
+            _ => {}
+        }
+    }
+    value.clone()
+}
 fn validate_literal(
     a: &Attribute,
     v: &NeutralValue,
@@ -567,7 +655,10 @@ fn validate_default(
     };
     for v in values {
         validate_literal(a, v, id, bundle)?;
-        if a.enumeration.as_ref().is_some_and(|vs| !vs.contains(v)) {
+        if a.enumeration
+            .as_ref()
+            .is_some_and(|vs| !vs.iter().any(|entry| same_enum_literal(a, entry, v)))
+        {
             return Err(error(
                 ErrorReason::NonSerializableDefault,
                 id,

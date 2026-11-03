@@ -71,28 +71,18 @@ impl Snapshot {
         // Snapshot retains the original wire tree and canonical schema identity.
         for model in wire["models"].as_object_mut().unwrap().values_mut() {
             for attr in model["attributes"].as_array_mut().unwrap() {
-                if let Some(values) = attr.as_object_mut().unwrap().remove("values") {
-                    attr["enum"] = values;
-                }
-            }
-            for mapping in model["mappings"].as_object_mut().unwrap().values_mut() {
-                for rule in mapping["rules"].as_array_mut().unwrap() {
-                    if let Some(render) = rule.get_mut("render") {
-                        for (key, affirmative) in [("nil", "nil"), ("empty", "blank")] {
-                            if let Some(value) =
-                                render.get(key).and_then(serde_json::Value::as_bool)
-                            {
-                                render[key] = serde_json::Value::String(
-                                    if value { affirmative } else { "omit" }.into(),
-                                );
-                            }
-                        }
-                    }
+                if let Some(values) = attr.as_object_mut().unwrap().remove("enum") {
+                    attr["values"] = values;
                 }
             }
         }
-        serde_json::from_value(wire)
-            .map_err(|e| failure(ErrorReason::InvalidDocument, "", e.to_string()))
+        serde_json::from_value(wire).map_err(|e| {
+            failure(
+                ErrorReason::UnsupportedMapping,
+                "",
+                format!("typed graph cannot represent declaration: {e}"),
+            )
+        })
     }
 }
 
