@@ -301,6 +301,8 @@ fn model(n: &Node, id: Option<&str>, at: &str) -> ContractResult<()> {
     }
     let attrs = field(n, "attributes", at)?;
     let mut names = BTreeSet::new();
+    // Non-collection builtin `hash` attributes: the only `any_attribute` targets.
+    let mut hashes = BTreeSet::new();
     for (i, attr) in array(attrs, &pointer(at, "attributes"))?.iter().enumerate() {
         let loc = format!("{at}/attributes/{i}");
         let result = (|| {
@@ -320,7 +322,17 @@ fn model(n: &Node, id: Option<&str>, at: &str) -> ContractResult<()> {
                     "duplicate attribute",
                 ));
             }
-            attribute(attr, &loc)
+            attribute(attr, &loc)?;
+            let hash = attr.get("type").is_some_and(|t| {
+                t.get("kind").and_then(Node::string) == Some("builtin")
+                    && t.get("name").and_then(Node::string) == Some("hash")
+            }) && attr
+                .get("collection")
+                .is_none_or(|c| c == &Node::Bool(false));
+            if hash {
+                hashes.insert(name);
+            }
+            Ok(())
         })();
         result.map_err(|mut e: Box<crate::contracts::ContractError>| {
             e.model_id = Some(format!("{name}@{reg}"));
@@ -347,7 +359,7 @@ fn model(n: &Node, id: Option<&str>, at: &str) -> ContractResult<()> {
     for (format, mapping) in mappings.object().unwrap() {
         let loc = pointer(&pointer(at, "mappings"), format);
         let result = match format.as_str() {
-            "xml" => xml(mapping, &names, &loc),
+            "xml" => xml(mapping, &names, &hashes, &loc),
             // toml validates like json/yaml; the typed view refuses it by name.
             "json" | "yaml" | "toml" => key_mapping(mapping, &names, &loc),
             _ => Err(failure(
