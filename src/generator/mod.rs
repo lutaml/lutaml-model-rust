@@ -23,7 +23,7 @@ fn error(reason: ErrorReason, id: &str, field: &str, detail: &str) -> Box<Contra
     })
 }
 fn quote(s: &str) -> String {
-    serde_json::to_string(s).expect("strings serialize")
+    format!("{s:?}")
 }
 /// Deterministic Rust member identifier. Emitters must still reject collisions
 /// among members of the same model after applying this normalization.
