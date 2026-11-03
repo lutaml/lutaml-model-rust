@@ -336,3 +336,20 @@ fn ordered_content_reserved_members_and_versions_reject() {
         ErrorReason::InvalidOrderedContent
     );
 }
+
+#[test]
+fn public_naming_api_matches_static_models_and_rejects_collisions() {
+    let b = bundle();
+    let names = generator::model_names(&b).unwrap();
+    assert_eq!(names["Node@default"], "Node");
+    assert_eq!(names["Leaf@default"], "Leaf");
+    assert_eq!(generator::member_identifier("wire-name"), "wire_name");
+    assert_eq!(generator::member_identifier("type"), "type_");
+    assert_eq!(generator::member_identifier("_"), "_Lml");
+    let mut b = bundle();
+    b.models.get_mut("Leaf@default").unwrap().model = "Node".into();
+    assert_eq!(
+        generator::model_names(&b).unwrap_err().reason,
+        ErrorReason::ReservedMember
+    );
+}

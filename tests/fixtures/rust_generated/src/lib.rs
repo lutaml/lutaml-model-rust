@@ -89,4 +89,19 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn public_content_token_reference_supports_external_traversal() {
+        let token = ContentToken::Element {
+            attribute: "tags".into(),
+            index: 1,
+        };
+        assert_eq!(token.reference(), Some(("tags", 1)));
+        let literal = ContentToken::Text {
+            source: TextSource::Literal {
+                literal: "text".into(),
+            },
+        };
+        assert_eq!(literal.reference(), None);
+    }
 }
