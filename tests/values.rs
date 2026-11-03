@@ -127,3 +127,42 @@ fn numeric_facets_use_exact_comparison_and_value_digits() {
         ErrorReason::UnsupportedType
     );
 }
+
+#[test]
+fn shared_ruby_exact_value_vectors_match_without_rounding() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/exact-vectors.json")).unwrap();
+    for vector in vectors["decimals"].as_array().unwrap() {
+        let input = vector["input"].as_str().unwrap();
+        let expected = vector["canonical"].as_str().unwrap();
+        assert_eq!(
+            render_decimal(&parse_decimal(input).unwrap()).unwrap(),
+            expected,
+            "{input}"
+        );
+        // Authored precision is retained independently of canonical numeric form.
+        assert_eq!(ExactDecimal::parse(input).unwrap().as_str(), input);
+    }
+    for vector in vectors["rationals"].as_array().unwrap() {
+        let numerator = vector["numerator"]
+            .as_str()
+            .unwrap()
+            .parse::<BigInt>()
+            .unwrap();
+        let denominator = vector["denominator"]
+            .as_str()
+            .unwrap()
+            .parse::<BigInt>()
+            .unwrap();
+        let value = BigRational::new(numerator, denominator);
+        if let Some(expected) = vector["canonical"].as_str() {
+            assert_eq!(render_decimal(&value).unwrap(), expected, "{value}");
+        } else {
+            assert_eq!(vector["refusal"], "nonterminating_rational");
+            assert_eq!(
+                render_decimal(&value).unwrap_err().reason,
+                ErrorReason::NonterminatingRational
+            );
+        }
+    }
+}
