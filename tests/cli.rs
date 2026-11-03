@@ -113,15 +113,22 @@ fn actual_cli_generates_deterministic_pinned_artifacts_and_checks_corruption() {
 fn snapshot_wire_checksum_is_authoritative_and_generated_consumer_executes() {
     let temp = Temp::new();
     let mut wire: serde_json::Value = serde_json::from_slice(&source()).unwrap();
+    // The Ruby contract has no `enum` alias (RS2): the wire key is `values` only.
     let attribute = wire["models"]["Book@default"]["attributes"][0]
         .as_object_mut()
         .unwrap();
     let values = attribute.remove("values").unwrap();
-    attribute.insert("enum".into(), values);
+    attribute.insert("enum".into(), values.clone());
+    assert!(lml::load(&serde_json::to_vec(&wire).unwrap(), InputFormat::Json).is_err());
+    let attribute = wire["models"]["Book@default"]["attributes"][0]
+        .as_object_mut()
+        .unwrap();
+    attribute.remove("enum");
+    attribute.insert("values".into(), values);
     let snapshot = lml::load(&serde_json::to_vec(&wire).unwrap(), InputFormat::Json).unwrap();
     let artifacts = Artifacts::generate(&snapshot).unwrap();
     assert_eq!(artifacts.manifest.lml_checksum, snapshot.checksum());
-    assert!(snapshot.canonical_json().contains("\"enum\""));
+    assert!(snapshot.canonical_json().contains("\"values\""));
     assert!(serde_json::to_string(&snapshot.bundle().unwrap())
         .unwrap()
         .contains("\"values\""));

@@ -197,11 +197,7 @@ pub struct Attribute {
     pub discriminator: Option<Discriminator>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<ModelId>,
-    #[serde(
-        rename = "values",
-        alias = "enum",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "values", skip_serializing_if = "Option::is_none")]
     pub enumeration: Option<Vec<NeutralValue>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

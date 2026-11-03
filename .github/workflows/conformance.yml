@@ -67,19 +67,19 @@ jobs:
     # The pinned moxml-rs revision needs a newer compiler than the 1.85.0 baseline,
     # so the `xml` feature is exercised on its own toolchain.
     env:
-      RUSTUP_TOOLCHAIN: stable
+      RUSTUP_TOOLCHAIN: 1.99.1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Install stable Rust with lint components
+      - name: Install pinned Rust 1.99.1 with lint components
         shell: bash
         run: |
           python3 - <<'PY'
           import fcntl, subprocess
           with open('/tmp/lutaml-1033-memory.lock', 'w') as lock:
               fcntl.flock(lock, fcntl.LOCK_EX)
-              subprocess.run(['rustup', 'toolchain', 'install', 'stable', '--profile', 'minimal', '--component', 'clippy'], check=True)
+              subprocess.run(['rustup', 'toolchain', 'install', '1.99.1', '--profile', 'minimal', '--component', 'clippy'], check=True)
           PY
       - name: Locked XML codec conformance against the Ruby oracle
         shell: bash
