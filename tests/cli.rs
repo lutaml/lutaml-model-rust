@@ -445,3 +445,128 @@ fn invalid_corpus_inputs_fail_before_artifact_writes() {
     .success());
     assert!(!out.exists());
 }
+
+fn cargo_consumer(temp: &Temp, name: &str, main: &str) -> Output {
+    let src = temp.0.join("src");
+    let path = serde_json::to_string(env!("CARGO_MANIFEST_DIR")).unwrap();
+    fs::write(temp.0.join("Cargo.toml"),format!("[package]\nname=\"{name}\"\nversion=\"0.0.0\"\nedition=\"2021\"\n[dependencies]\nlutaml-model={{path={path},default-features=false,features=[\"runtime\"]}}\nserde={{version=\"=1.0.219\",features=[\"derive\"]}}\nserde_json={{version=\"=1.0.140\",features=[\"arbitrary_precision\"]}}\n")).unwrap();
+    fs::write(src.join("main.rs"), main).unwrap();
+    Command::new(env!("CARGO"))
+        .args(["run", "--offline", "--quiet"])
+        .current_dir(&temp.0)
+        .env(
+            "CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/cli-consumer"),
+        )
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn ruby_exported_rule_level_discriminator_generates_a_working_consumer() {
+    let temp = Temp::new();
+    let input = temp.0.join("kennel.json");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/ruby-polymorphic-kennel.bundle.json"),
+        &input,
+    )
+    .unwrap();
+    let src = temp.0.join("src");
+    fs::create_dir(&src).unwrap();
+    let out = invoke("generate", &input, &src.join("generated"), None);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let result = cargo_consumer(
+        &temp,
+        "cli-kennel-consumer",
+        r##"mod generated;
+use generated::{json_codecs::*, models::*};
+fn main() {
+ let wire=r#"{"animals":[{"kind":"dog","name":"rex"},{"kind":"animal","name":"x"}],"owner":"o"}"#;
+ let kennel=read_LmlImportFixtures_Kennel_json(wire).unwrap();
+ let Presence::Value(animals)=&kennel.animals else { panic!("animals") };
+ assert!(matches!(&animals[0],LmlImportFixtures_Kennel_animals_Union::Case1(dog) if dog.kind==Presence::Value("dog".to_string())));
+ assert!(matches!(&animals[1],LmlImportFixtures_Kennel_animals_Union::Case0(a) if a.kind==Presence::Value("animal".to_string())));
+ let written=write_LmlImportFixtures_Kennel_json(&kennel).unwrap();
+ assert_eq!(serde_json::from_str::<serde_json::Value>(&written).unwrap(),serde_json::from_str::<serde_json::Value>(wire).unwrap());
+ for bad in [r#"{"animals":[{"kind":"cat"}]}"#,r#"{"animals":[{"name":"n"}]}"#] {
+  let error=read_LmlImportFixtures_Kennel_json(bad).unwrap_err();
+  assert_eq!(error.reason,lutaml_model::contracts::ErrorReason::UnknownDiscriminator,"{bad}");
+ }
+}
+"##,
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn bindings_file_supplies_trusted_value_type_bindings() {
+    let temp = Temp::new();
+    let mut wire: serde_json::Value = serde_json::from_slice(&source()).unwrap();
+    wire["value_types"] = json!({"Money":{"base":"decimal","facets":{"fraction_digits":3}}});
+    wire["models"]["Book@default"]["attributes"][0]["type"] = json!({"kind":"value","id":"Money"});
+    wire["models"]["Book@default"]["attributes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("values");
+    let input = temp.0.join("book.json");
+    fs::write(&input, serde_json::to_vec(&wire).unwrap()).unwrap();
+    let run = |out: &Path, bindings: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_lutaml-model"));
+        cmd.arg("generate")
+            .arg("--input")
+            .arg(&input)
+            .arg("--output")
+            .arg(out);
+        if let Some(b) = bindings {
+            cmd.arg("--bindings").arg(b);
+        }
+        cmd.output().unwrap()
+    };
+    let missing = run(&temp.0.join("o1"), None);
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("MissingTypeBinding"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    let good = temp.0.join("good.json");
+    fs::write(
+        &good,
+        r#"{"types":{"Money":{"rust_type":"crate::money::Money","codec":null}}}"#,
+    )
+    .unwrap();
+    let ok = run(&temp.0.join("o2"), Some(good.to_str().unwrap()));
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let models = fs::read_to_string(temp.0.join("o2/models.rs")).unwrap();
+    assert!(models.contains("crate::money::Money"));
+    for (name, body) in [
+        ("bad1.json", "{"),
+        (
+            "bad2.json",
+            r#"{"types":{"Money":{"rust_type":"x; evil()"}}}"#,
+        ),
+        ("bad3.json", r#"{"types":{"Money":{}}}"#),
+    ] {
+        let path = temp.0.join(name);
+        fs::write(&path, body).unwrap();
+        let out = temp.0.join(format!("o-{name}"));
+        assert!(
+            !run(&out, Some(path.to_str().unwrap())).status.success(),
+            "{name}"
+        );
+        assert!(!out.exists());
+    }
+}

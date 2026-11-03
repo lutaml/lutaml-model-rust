@@ -9,6 +9,13 @@ fn failure(reason: ErrorReason, id: &str, member: &str, location: &str, detail: 
 fn object(value:Value,id:&str)->ContractResult<Map<String,Value>> { value.as_object().cloned().ok_or_else(||failure(ErrorReason::InvalidDocument,id,"","/input","expected object")) }
 #[allow(dead_code)]
 fn empty(v:&Value)->bool { match v { Value::String(v)=>v.is_empty(),Value::Array(v)=>v.is_empty(),Value::Object(v)=>v.is_empty(),_=>false } }
+// Only a plain 64-bit integer (ordered-content indexes) may be a JSON number; any
+// fractional, exponent, negative-zero or oversized spelling is not a portable exact boundary.
+fn plain_integer(n:&str)->Result<Value,&'static str>{
+ let digits=n.strip_prefix('-').unwrap_or(n);
+ let ok=!digits.is_empty()&&digits.bytes().all(|c|c.is_ascii_digit())&&n!="-0"&&(n.parse::<i64>().is_ok()||n.parse::<u64>().is_ok());
+ if ok{serde_json::from_str::<Value>(n).map_err(|_|"numeric JSON is not a portable exact boundary")}else{Err("numeric JSON is not a portable exact boundary")}
+}
 fn parse_json(input:&str,id:&str)->ContractResult<Value>{
  // Reject duplicate keys before mapping aliases. serde_json::Value alone would
  // silently keep only the last key, erasing an observable input ambiguity.
@@ -28,7 +35,18 @@ fn parse_json(input:&str,id:&str)->ContractResult<Value>{
     fn visit_unit<E:serde::de::Error>(self)->Result<Unique,E>{Ok(Unique(Value::Null))}
     fn visit_none<E:serde::de::Error>(self)->Result<Unique,E>{Ok(Unique(Value::Null))}
     fn visit_seq<A:serde::de::SeqAccess<'de>>(self,mut a:A)->Result<Unique,A::Error>{let mut v=Vec::new();while let Some(Unique(x))=a.next_element()?{v.push(x);}Ok(Unique(Value::Array(v)))}
-    fn visit_map<A:serde::de::MapAccess<'de>>(self,mut a:A)->Result<Unique,A::Error>{let mut v=Map::new();while let Some((k,Unique(x)))=a.next_entry::<String,Unique>()?{if v.insert(k,x).is_some(){return Err(serde::de::Error::custom("duplicate JSON key"));}}Ok(Unique(Value::Object(v)))}
+    fn visit_map<A:serde::de::MapAccess<'de>>(self,mut a:A)->Result<Unique,A::Error>{
+     let mut v=Map::new();let mut first=true;
+     while let Some(k)=a.next_key::<String>()?{
+      // With serde_json arbitrary_precision (always on for consumers of this crate)
+      // every JSON number arrives as a one-entry map, never through visit_f64.
+      if first && k=="$serde_json::private::Number"{let n:String=a.next_value()?;return plain_integer(&n).map(|v|Unique(v)).map_err(serde::de::Error::custom);}
+      first=false;
+      let Unique(x)=a.next_value()?;
+      if v.insert(k,x).is_some(){return Err(serde::de::Error::custom("duplicate JSON key"));}
+     }
+     Ok(Unique(Value::Object(v)))
+    }
    }
    d.deserialize_any(Visitor)
   }

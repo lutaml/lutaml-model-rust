@@ -462,11 +462,7 @@ fn portable_profile_has_explicit_required_ids_and_corruption_failures() {
     assert!(bundle.models.contains_key("LmlConformance::Record@default"));
     assert_eq!(cases.len(), 1);
 }
-#[test]
-fn emitted_consumer_compiles_and_executes_json_behavior() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = root.join("target/json-generated-consumer");
-    std::fs::create_dir_all(dir.join("src")).unwrap();
+fn consumer_bundle() -> (Bundle, Vec<serde_json::Value>) {
     let mut b = fixture();
     let (oracle_bundle, oracle_cases) = pinned_oracle();
     b.models.extend(oracle_bundle.models);
@@ -529,6 +525,14 @@ fn emitted_consumer_compiles_and_executes_json_behavior() {
         ),
     );
 
+    (b, oracle_cases)
+}
+#[test]
+fn emitted_consumer_compiles_and_executes_json_behavior() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = root.join("target/json-generated-consumer");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let (b, oracle_cases) = consumer_bundle();
     let models = generator::RustEmitter
         .generate_models(&b, &TypeBindings::new())
         .unwrap();
@@ -587,7 +591,7 @@ num-traits="=0.2.19"
         String::from_utf8_lossy(&result.stderr)
     );
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("11 passed"), "{stdout}");
+    assert!(stdout.contains("13 passed"), "{stdout}");
 }
 
 #[test]
@@ -611,5 +615,237 @@ fn admitted_unknown_render_policies_are_named_codegen_refusals() {
             .unwrap_err()
             .reason,
         ErrorReason::UnsupportedMapping
+    );
+}
+
+/// Write a generated-code consumer crate and run one Cargo command in it. The
+/// outer targeted Cargo invocation holds the host memory lock; children use one
+/// build worker and share one target directory so dependencies build once.
+fn run_consumer(
+    name: &str,
+    bundle: &Bundle,
+    lib_tail: &str,
+    cargo: &[&str],
+) -> std::process::Output {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = root.join("target").join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let models = generator::RustEmitter
+        .generate_models(bundle, &TypeBindings::new())
+        .unwrap();
+    let json = RustJsonEmitter
+        .generate_json_codecs(bundle, &TypeBindings::new())
+        .unwrap();
+    std::fs::write(dir.join("src/models.rs"), &models["models.rs"]).unwrap();
+    std::fs::write(dir.join("src/json_codecs.rs"), &json["json_codecs.rs"]).unwrap();
+    std::fs::write(
+        dir.join("src/values.rs"),
+        include_str!("../src/values/mod.rs"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/lib.rs"),format!("pub mod contracts {{ pub use lutaml_model::contracts::*; }}\npub mod values;\npub mod models;\npub mod json_codecs;\n{lib_tail}")).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            "[package]\nname=\"{name}\"\nversion=\"0.0.0\"\nedition=\"2021\"\n[dependencies]\nlutaml-model={{path={}}}\nserde={{version=\"=1.0.219\",features=[\"derive\"]}}\nserde_json={{version=\"=1.0.140\",features=[\"arbitrary_precision\"]}}\nnum-bigint=\"=0.4.6\"\nnum-rational=\"=0.4.2\"\nnum-traits=\"=0.2.19\"\n",
+            serde_json::to_string(root.to_str().unwrap()).unwrap()
+        ),
+    )
+    .unwrap();
+    std::process::Command::new(env!("CARGO"))
+        .args(cargo)
+        .args(["--offline", "--manifest-path"])
+        .arg(dir.join("Cargo.toml"))
+        .env("CARGO_BUILD_JOBS", "1")
+        .env("CARGO_TARGET_DIR", root.join("target/json-consumer-build"))
+        .output()
+        .unwrap()
+}
+fn model_named(name: &str) -> ModelDocument {
+    model(
+        name,
+        vec![attribute("a", BuiltinType::String)],
+        vec![keep("a", &["a"])],
+    )
+}
+/// Names that are not reserved but resemble emitted items: enum variants and
+/// function-local types in the runtime, prelude names never written bare,
+/// module names, and names that used to alias emitted helper functions
+/// (`decode_Root_data`, `decode_Root_keyed`).
+const UNRESERVED_LOOKALIKES: &[&str] = &[
+    "Text",
+    "Element",
+    "Cdata",
+    "Member",
+    "Literal",
+    "Absent",
+    "Null",
+    "Unique",
+    "Visitor",
+    "Case0",
+    "Case1",
+    "A",
+    "S",
+    "T",
+    "D",
+    "E",
+    "values",
+    "models",
+    "contracts",
+    "json_codecs",
+    "parg_bindings",
+    "Ok",
+    "Err",
+    "Some",
+    "None",
+    "Iterator",
+    "From",
+    "Into",
+    "AsRef",
+    "Drop",
+    "Fn",
+    "Formatter",
+    "Ordering",
+    "Hash",
+    "Error",
+    "Item_data",
+    "Item_keyed",
+    "Root_data",
+    "Root_keyed",
+    "Children_data",
+    "Children_keyed",
+    "Record_data",
+    "Record_json",
+    "decode_Item",
+    "read_Item_json",
+];
+#[test]
+fn unreserved_lookalike_names_and_former_function_aliases_generate_a_crate_that_compiles() {
+    let mut b = fixture();
+    for name in UNRESERVED_LOOKALIKES {
+        b.models
+            .insert(format!("{name}@default"), model_named(name));
+    }
+    let out = run_consumer("json-lookalike-names", &b, "", &["check"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+#[test]
+fn every_capitalized_name_in_emitted_code_is_reserved_or_known_to_be_scoped() {
+    let (b, _) = consumer_bundle();
+    let names = generator::model_names(&b).unwrap();
+    let models = generator::RustEmitter
+        .generate_models(&b, &TypeBindings::new())
+        .unwrap();
+    let json = RustJsonEmitter
+        .generate_json_codecs(&b, &TypeBindings::new())
+        .unwrap();
+    // Enum variants, fn-local types and a few prelude constructors that the
+    // compile test above proves a model may share.
+    let scoped = [
+        "Absent", "Null", "Member", "Literal", "Element", "Text", "Cdata", "Unique", "Visitor",
+        "Ok", "Err", "Some", "None", "Self", "Case",
+    ];
+    let mut unknown = BTreeSet::new();
+    for text in [&models["models.rs"], &json["json_codecs.rs"]] {
+        let code = strip_literals(text);
+        let bytes = code.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                let token = &code[start..i];
+                let qualified = start >= 2 && &code[start - 2..start] == "::";
+                let capitalized = token.starts_with(|c: char| c.is_ascii_uppercase());
+                let model_derived = names.values().any(|n| token.starts_with(&format!("{n}_")))
+                    || names.values().any(|n| n == token);
+                let numbered_case =
+                    token.starts_with("Case") && token[4..].bytes().all(|c| c.is_ascii_digit());
+                if capitalized
+                    && token.len() > 1
+                    && !qualified
+                    && !model_derived
+                    && !numbered_case
+                    && !scoped.contains(&token)
+                    && !generator::RESERVED_NAMES.contains(&token)
+                {
+                    unknown.insert(token.to_string());
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "emitted names neither reserved nor known to be scoped: {unknown:?}"
+    );
+}
+fn strip_literals(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                while let Some(c) = chars.next() {
+                    if c == '\\' {
+                        chars.next();
+                    } else if c == '"' {
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                out.push('\n');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+#[test]
+fn emitted_function_names_cannot_alias_across_models() {
+    // `Item` + `Item_data` used to emit `decode_Item_data` twice.
+    let mut b = fixture();
+    for name in ["Item_data", "Item_keyed", "Root_keyed", "Root_data"] {
+        b.models
+            .insert(format!("{name}@default"), model_named(name));
+    }
+    let json = RustJsonEmitter
+        .generate_json_codecs(&b, &TypeBindings::new())
+        .unwrap();
+    let code = &json["json_codecs.rs"];
+    let mut seen = BTreeSet::new();
+    for line in code.lines() {
+        if let Some(rest) = line
+            .trim_start()
+            .strip_prefix("fn ")
+            .or_else(|| line.trim_start().strip_prefix("pub fn "))
+        {
+            if let Some(name) = rest.split(['(', '<']).next() {
+                assert!(
+                    seen.insert(name.to_string()) || name.is_empty(),
+                    "duplicate fn {name}"
+                );
+            }
+        }
+    }
+    assert!(
+        seen.contains("decode_Item")
+            && seen.contains("hydrate_Item")
+            && seen.contains("hydrate_Item_data")
     );
 }
