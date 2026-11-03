@@ -228,6 +228,8 @@ pub struct ModelSpec {
     pub attrs: &'static [AttrRule],
     pub elems: &'static [ElemRule],
     pub content: Option<ContentRule>,
+    /// The model collects unclaimed attributes (`any_attribute`).
+    pub any: bool,
 }
 
 pub struct ElemHit {
@@ -246,6 +248,28 @@ pub struct Scan {
     pub content_list: Vec<String>,
     pub content_text: String,
     pub tokens: Vec<ContentToken>,
+    /// Unclaimed attributes as `(local name, value)` in document order; empty
+    /// unless the model has an `any_attribute` rule.
+    pub any: Vec<(String, String)>,
+}
+
+/// Ruby `map_all_attributes`: every attribute no explicit attribute rule claims
+/// (by local name; `schemaLocation` is excluded), keyed by local name with the
+/// prefix stripped. A repeated local name keeps its first position and takes the
+/// later value. `xmlns` declarations are not attributes.
+fn unclaimed(row: &ElementRow, spec: &ModelSpec) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for a in &row.attributes {
+        let local = a.name.local.as_str();
+        if local == "schemaLocation" || spec.attrs.iter().any(|r| r.names.contains(&local)) {
+            continue;
+        }
+        match out.iter_mut().find(|e| e.0 == local) {
+            Some(e) => e.1 = a.value.clone(),
+            None => out.push((local.into(), a.value.clone())),
+        }
+    }
+    out
 }
 
 /// One pass over an element row: attributes, accepted children, text and the
@@ -271,6 +295,11 @@ pub fn scan(doc: &Doc, ord: usize, spec: &ModelSpec, loc: &str) -> ContractResul
         content_list: Vec::new(),
         content_text: doc.text_of(ord),
         tokens: Vec::new(),
+        any: if spec.any {
+            unclaimed(row, spec)
+        } else {
+            Vec::new()
+        },
     };
     let mut texts: Vec<String> = Vec::new();
     let mut text_index = 0u64;
@@ -529,6 +558,8 @@ pub struct Values {
     pub elems: Vec<Option<Vec<Item>>>,
     pub content: Vec<String>,
     pub tokens: Option<Vec<ContentToken>>,
+    /// `any_attribute` entries: one unprefixed, un-namespaced attribute each.
+    pub any: Vec<(String, String)>,
 }
 
 fn named(name: &str, ns: Option<&NsOut>) -> QName {
@@ -622,6 +653,10 @@ pub fn assemble(
                 el.attributes.push(Attribute::new(qn, text));
             }
         }
+    }
+    for (name, value) in &values.any {
+        el.attributes
+            .push(Attribute::new(QName::local(name.as_str()), value.as_str()));
     }
     let content_cdata = spec.content.as_ref().is_some_and(|c| c.cdata);
     if let (true, Some(tokens)) = (spec.ordered, &values.tokens) {

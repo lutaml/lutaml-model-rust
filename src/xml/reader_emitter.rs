@@ -173,6 +173,8 @@ pub(super) struct Plan {
     pub attrs: Vec<AttrPlan>,
     pub elems: Vec<ElemPlan>,
     pub content: Option<ContentPlan>,
+    /// The `any_attribute` target: `(member, ident)`.
+    pub any: Option<(String, String)>,
     /// Reasons the writer refuses this mapping by name.
     pub writer_refusals: Vec<String>,
 }
@@ -304,6 +306,7 @@ pub(super) fn plan(
         attrs: Vec::new(),
         elems: Vec::new(),
         content: None,
+        any: None,
         writer_refusals: Vec::new(),
     };
     for op in &projection.operations {
@@ -347,6 +350,9 @@ fn field_plan(
                 cdata: field.cdata,
                 kind: scalar_kind(bundle, id, &field.attribute)?,
             });
+        }
+        XmlRuleKind::AnyAttribute => {
+            out.any = Some((field.member.clone(), ident));
         }
         XmlRuleKind::Attribute => {
             if collection {
@@ -528,8 +534,8 @@ pub(super) fn emit_reader(out: &mut String, p: &Plan) {
     });
     writeln!(
         out,
-        "const RS_{name}: rt::ModelSpec = rt::ModelSpec {{ id: {id}, ordered: {}, mixed: {}, tokens: {}, attrs: &[{attrs}], elems: &[{elems}], content: {content} }};",
-        p.ordered, p.mixed, p.tokens
+        "const RS_{name}: rt::ModelSpec = rt::ModelSpec {{ id: {id}, ordered: {}, mixed: {}, tokens: {}, attrs: &[{attrs}], elems: &[{elems}], content: {content}, any: {} }};",
+        p.ordered, p.mixed, p.tokens, p.any.is_some()
     )
     .unwrap();
     writeln!(
@@ -633,6 +639,9 @@ pub(super) fn emit_reader(out: &mut String, p: &Plan) {
             ));
             writeln!(out, " {{ {at} m.{} = {value}; }}", c.ident).unwrap();
         }
+    }
+    if let Some((_, ident)) = &p.any {
+        writeln!(out, " if !s.any.is_empty() {{ m.{ident} = Presence::Value(StringHash::from_pairs(s.any)); }}").unwrap();
     }
     if p.tokens {
         writeln!(out, " m.__lml_content = Presence::Value(rt::retype(&s.tokens, &rt::Where {{ id: {id}, attribute: \"__lml_content\", rule: \"\", loc }})?);").unwrap();

@@ -1021,9 +1021,9 @@ fn toml_mapping_validates_and_the_typed_view_refuses_it_by_name() {
 }
 
 /// 02g: the `any_attribute` XML rule is accepted exactly where Ruby accepts it
-/// (parity rows `v2_any_attr_*`), and the typed view refuses it by name.
+/// (parity rows `v2_any_attr_*`) and the typed view carries it as a rule kind.
 #[test]
-fn any_attribute_rule_is_validated_like_ruby_and_refused_by_the_typed_view() {
+fn any_attribute_rule_is_validated_like_ruby_and_typed() {
     let rule = json!({"kind":"any_attribute","to":"other"});
     let mut v = bundle();
     v["capabilities"] = json!(["json", "xml"]);
@@ -1034,11 +1034,15 @@ fn any_attribute_rule_is_validated_like_ruby_and_refused_by_the_typed_view() {
         .push(json!({"name":"other","type":{"kind":"builtin","name":"hash"}}));
     model["mappings"]["xml"] = json!({"rules":[rule]});
     let at = "/models/Example::Node@custom/mappings/xml/rules";
-    let error = parsed(&v).bundle().unwrap_err();
-    assert_eq!(error.reason, ErrorReason::UnsupportedMapping);
-    assert_eq!(error.location, format!("{at}/0"));
-    assert_eq!(error.format.as_deref(), Some("xml"));
-    assert!(format!("{error:?}").contains("any_attribute"), "{error:?}");
+    let typed = parsed(&v).bundle().unwrap();
+    let rules = &typed.models["Example::Node@custom"]
+        .mappings
+        .xml
+        .as_ref()
+        .unwrap()
+        .rules;
+    assert_eq!(rules[0].kind, XmlRuleKind::AnyAttribute);
+    assert_eq!(rules[0].to, "other");
     let rules =
         |v: &mut Value| v["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"].take();
     let mut w = v.clone();

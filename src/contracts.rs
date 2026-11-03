@@ -325,6 +325,8 @@ pub enum XmlRuleKind {
     Content,
     Sequence,
     Choice,
+    /// Ruby `map_all_attributes`: collects every attribute no other rule claims.
+    AnyAttribute,
 }
 impl XmlRuleKind {
     fn is_unspecified(&self) -> bool {

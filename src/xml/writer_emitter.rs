@@ -128,6 +128,13 @@ pub(super) fn emit_writer(out: &mut String, p: &Plan) {
             .unwrap();
         }
     }
+    if let Some((_, ident)) = &p.any {
+        writeln!(
+            out,
+            " if let Presence::Value(h) = &v.{ident} {{ values.any = h.pairs().to_vec(); }}"
+        )
+        .unwrap();
+    }
     if p.tokens {
         writeln!(out, " let at = rt::Where {{ id: {id}, attribute: \"__lml_content\", rule: \"\", loc: \"/__lml_content\" }};\n values.tokens = match order {{ Some(t) => Some(t.to_vec()), None => match &v.__lml_content {{ Presence::Value(t) => Some(rt::retype(t, &at)?), _ => None }} }};").unwrap();
     } else {

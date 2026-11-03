@@ -82,22 +82,6 @@ impl Snapshot {
                 return Err(error);
             }
         }
-        // Likewise `any_attribute` (map_all_attributes): the validator accepts
-        // it, the typed XmlRuleKind has no variant until the XML codec card.
-        for (id, model) in wire["models"].as_object().unwrap() {
-            let rules = model["mappings"]["xml"]["rules"].as_array();
-            if let Some(i) = rules.and_then(|r| r.iter().position(|r| r["kind"] == "any_attribute"))
-            {
-                let mut error = failure(
-                    ErrorReason::UnsupportedMapping,
-                    &format!("{}/mappings/xml/rules/{i}", pointer("/models", id)),
-                    "any_attribute: the typed Rust graph has no catch-all attribute rule",
-                );
-                error.model_id = Some(id.clone());
-                error.format = Some("xml".into());
-                return Err(error);
-            }
-        }
         serde_json::from_value(wire).map_err(|e| {
             failure(
                 ErrorReason::UnsupportedMapping,
@@ -271,7 +255,10 @@ pub fn validate_ordered_content(
     let mut kinds = std::collections::BTreeMap::new();
     if let Some(xml) = &model.mappings.xml {
         for rule in &xml.rules {
-            if matches!(rule.kind, XmlRuleKind::Attribute) {
+            if matches!(
+                rule.kind,
+                XmlRuleKind::Attribute | XmlRuleKind::AnyAttribute
+            ) {
                 continue;
             }
             kinds.insert(rule.to.as_str(), &rule.kind);

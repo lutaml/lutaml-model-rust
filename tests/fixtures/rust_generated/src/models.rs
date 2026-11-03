@@ -32,6 +32,23 @@ impl ExactDecimal {
  pub fn as_str(&self)->&str { &self.0 }
 }
 impl<'de> Deserialize<'de> for ExactDecimal { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StringHash(Vec<(String, String)>);
+impl StringHash {
+ pub fn from_pairs(pairs: Vec<(String, String)>) -> Self { let mut out: Vec<(String, String)> = Vec::new(); for (k, v) in pairs { match out.iter_mut().find(|e| e.0 == k) { Some(e) => e.1 = v, None => out.push((k, v)) } } Self(out) }
+ pub fn pairs(&self) -> &[(String, String)] { &self.0 }
+ pub fn get(&self, key: &str) -> Option<&str> { self.0.iter().find(|e| e.0 == key).map(|e| e.1.as_str()) }
+ pub fn len(&self) -> usize { self.0.len() }
+ pub fn is_empty(&self) -> bool { self.0.is_empty() }
+}
+impl Serialize for StringHash { fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok,S::Error> { s.collect_map(self.0.iter().map(|(k, v)| (k, v))) } }
+impl<'de> Deserialize<'de> for StringHash {
+ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{
+  struct V;
+  impl<'de> serde::de::Visitor<'de> for V { type Value=StringHash; fn expecting(&self,f:&mut std::fmt::Formatter)->std::fmt::Result{ f.write_str("an object of string values") } fn visit_map<A:serde::de::MapAccess<'de>>(self,mut m:A)->Result<StringHash,A::Error>{ let mut v=Vec::new(); while let Some(e)=m.next_entry::<String,String>()? { v.push(e); } Ok(StringHash::from_pairs(v)) } }
+  d.deserialize_map(V)
+ }
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PortableFloat(f64);
 impl Eq for PortableFloat {}

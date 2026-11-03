@@ -220,7 +220,7 @@ fn invalid_defaults_bounds_and_unsupported_types_refuse() {
     assert!(models["models.rs"].contains("PortableFloat>"));
     let mut b = bundle();
     b.models.get_mut("Leaf@default").unwrap().attributes[0].value_type = TypeRef::Builtin {
-        name: BuiltinType::Hash,
+        name: BuiltinType::Date,
     };
     assert_eq!(
         RustEmitter

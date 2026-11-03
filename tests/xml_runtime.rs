@@ -51,6 +51,21 @@ fn full_bundle() -> Bundle {
         ),
     );
     models.insert(
+        "Any@default".into(),
+        doc_model(
+            "Any",
+            json!({"root": {"element": "n"}, "namespace": {"mode": "uri", "uri": "d"},
+                "rules": [
+                    {"kind": "attribute", "name": ["id"], "to": "id", "namespace": {"mode": "inherit"}},
+                    {"kind": "any_attribute", "to": "other"}]}),
+            vec![
+                str_attr("id"),
+                json!({"name": "other", "type": {"kind": "builtin", "name": "hash"}, "required": false,
+                    "collection": false, "default": {"present": false}, "initialize_empty": false}),
+            ],
+        ),
+    );
+    models.insert(
         "QDoc@default".into(),
         doc_model(
             "QDoc",
@@ -553,12 +568,69 @@ fn generation_refusals_name_the_mapping() {
     let e = refusal(|b| {
         let m = b.models.get_mut("Doc@default").unwrap();
         m.attributes[0].value_type = TypeRef::Builtin {
-            name: BuiltinType::Hash,
+            name: BuiltinType::Date,
         };
     });
-    // The shared model generator refuses a hash type before XML planning starts.
+    // The shared model generator refuses a lexical-codec type before XML planning starts.
     assert_eq!(e.reason, ErrorReason::UnsupportedType);
     assert!(e.format.is_some() || e.model_id.is_some(), "{e:?}");
+}
+
+/// 02g golden: Ruby reads `<n xmlns:x="u" xmlns="d" id="1" x:a="2" b="3" xml:lang="en"/>`
+/// (model `id` mapped, `other` catch-all) to `{"a"=>"2","b"=>"3","lang"=>"en"}`
+/// (prefix stripped, xmlns excluded) and writes each entry back as an unprefixed
+/// attribute after the mapped ones.
+#[test]
+fn any_attribute_reads_and_writes_like_ruby() {
+    const ID: &str = "Any@default";
+    let xml = r#"<n xmlns:x="u" xmlns="d" id="1" x:a="2" b="3" xml:lang="en"/>"#;
+    let read_back = read(ID, xml);
+    let model = ok(&read_back);
+    assert_eq!(model["id"], "1");
+    assert_eq!(model["other"], json!({"a": "2", "b": "3", "lang": "en"}));
+    assert_eq!(
+        serde_json::to_string(&model["other"]).unwrap(),
+        r#"{"a":"2","b":"3","lang":"en"}"#
+    );
+    let written = write(ID, model);
+    assert_eq!(
+        ok(&written),
+        r#"<n xmlns="d" id="1" a="2" b="3" lang="en"/>"#
+    );
+    // Nothing unclaimed: the member stays unset, not an empty hash.
+    let none = read(ID, r#"<n xmlns="d" id="1"/>"#);
+    assert!(ok(&none).get("other").is_none_or(Value::is_null), "{none}");
+    // A repeated local name keeps its first position and the later value.
+    let dup = read(ID, r#"<n xmlns="d" xmlns:x="u" a="1" b="2" x:a="3"/>"#);
+    assert_eq!(
+        serde_json::to_string(&ok(&dup)["other"]).unwrap(),
+        r#"{"a":"3","b":"2"}"#
+    );
+    // A hash entry that is not a legal attribute name is refused, not dropped.
+    let bad = write(ID, &json!({"id": "1", "other": {"a b": "x"}}));
+    assert_eq!(err(&bad)["reason"], "not_serializable", "{bad}");
+}
+
+#[test]
+fn any_attribute_projection_refuses_what_ruby_refuses() {
+    let refused = |edit: &dyn Fn(&mut Value)| {
+        let mut raw = serde_json::to_value(full_bundle()).unwrap();
+        edit(&mut raw["models"]["Any@default"]);
+        let b: Bundle = serde_json::from_value(raw).unwrap();
+        lutaml_model::xml::projection::compile_projection(&b, "Any@default").unwrap_err()
+    };
+    let e = refused(&|m| {
+        let rule = m["mappings"]["xml"]["rules"][1].clone();
+        m["mappings"]["xml"]["rules"]
+            .as_array_mut()
+            .unwrap()
+            .push(rule);
+    });
+    assert_eq!(e.reason, ErrorReason::UnsupportedMapping);
+    let e = refused(&|m| m["mappings"]["xml"]["rules"][1]["to"] = json!("id"));
+    assert_eq!(e.reason, ErrorReason::UnsupportedMapping);
+    let e = refused(&|m| m["mappings"]["xml"]["rules"][1]["name"] = json!(["x"]));
+    assert_eq!(e.reason, ErrorReason::UnsupportedMapping);
 }
 
 #[test]

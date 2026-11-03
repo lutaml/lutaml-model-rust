@@ -319,11 +319,16 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
             ));
         }
     }
+    let top_level = rules.len();
     grouped_fields(id, &groups, &mut rules, &format!("{path}/sequence"))?;
+    let mut any_attribute = false;
     for (index, rule) in rules.iter().enumerate() {
         if !matches!(
             rule.kind,
-            XmlRuleKind::Attribute | XmlRuleKind::Element | XmlRuleKind::Content
+            XmlRuleKind::Attribute
+                | XmlRuleKind::Element
+                | XmlRuleKind::Content
+                | XmlRuleKind::AnyAttribute
         ) || !rule.key.is_empty()
             || rule.members.is_some()
             || rule.min.is_some()
@@ -341,6 +346,48 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
         }
 
         let location = format!("{path}/rules/{index}");
+        if rule.kind == XmlRuleKind::AnyAttribute {
+            let refuse = || {
+                error(
+                    id,
+                    ErrorReason::UnsupportedMapping,
+                    &location,
+                    "any_attribute needs one bare top-level rule onto a scalar hash attribute",
+                )
+            };
+            let attribute = *attributes.get(rule.to.as_str()).ok_or_else(refuse)?;
+            let hash = matches!(
+                attribute.value_type,
+                TypeRef::Builtin {
+                    name: BuiltinType::Hash
+                }
+            ) && matches!(attribute.collection, Collection::Scalar(_))
+                && attribute.reference.is_none();
+            let bare = rule.name.is_none()
+                && rule.prefix.is_none()
+                && rule.cdata.is_none()
+                && rule.render.is_none()
+                && rule.discriminator.is_none()
+                && rule.namespace == Namespace::Inherit;
+            if index >= top_level || any_attribute || !hash || !bare {
+                return Err(refuse());
+            }
+            any_attribute = true;
+            mapped.insert(rule.to.as_str());
+            operations.push(Operation::Field(Box::new(Field {
+                member: rule.to.clone(),
+                attribute: attribute.clone(),
+                value_type: attribute.value_type.clone(),
+                kind: XmlRuleKind::AnyAttribute,
+                aliases: Vec::new(),
+                namespace: Namespace::Inherit,
+                prefix: None,
+                cdata: false,
+                render: None,
+                discriminator: None,
+            })));
+            continue;
+        }
         let attribute = attributes.get(rule.to.as_str()).ok_or_else(|| {
             error(
                 id,

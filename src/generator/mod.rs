@@ -73,6 +73,7 @@ pub const RESERVED_NAMES: &[&str] = &[
     "ExactInteger",
     "ExactDecimal",
     "PortableFloat",
+    "StringHash",
     // Imported by the generated files.
     "Serialize",
     "Deserialize",
@@ -258,6 +259,8 @@ fn builtin(t: &BuiltinType, id: &str, field: &str) -> ContractResult<String> {
         BuiltinType::Decimal | BuiltinType::Rational => "ExactDecimal",
         BuiltinType::Float => "PortableFloat",
         BuiltinType::Qname => "QName",
+        // An ordered string-to-string map (the XML catch-all attribute target).
+        BuiltinType::Hash => "StringHash",
         // Lexical formats require a declared validator/binding rather than an
         // unchecked String or a platform-dependent date/URI interpretation.
         _ => {
