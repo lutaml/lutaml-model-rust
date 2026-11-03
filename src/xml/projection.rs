@@ -1,0 +1,341 @@
+//! Pure compile-time lowering of portable XML metadata, independent of XML I/O.
+use super::contract::{Field, Operation, Projection};
+use crate::contracts::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+fn error(id: &str, reason: ErrorReason, location: &str, detail: &str) -> Box<ContractError> {
+    Box::new(ContractError {
+        reason,
+        model_id: Some(id.into()),
+        attribute: None,
+        format: Some("xml".into()),
+        rule: None,
+        location: location.into(),
+        klass: None,
+        detail: Some(detail.into()),
+    })
+}
+
+fn pointer(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
+fn namespace(id: &str, ns: &Namespace, location: &str) -> ContractResult<()> {
+    if let Namespace::Uri { uri, prefix } = ns {
+        if uri.is_empty()
+            || prefix
+                .as_ref()
+                .is_some_and(|p| p.is_empty() || p.contains(':'))
+        {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                location,
+                "namespace",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn discriminator(
+    bundle: &Bundle,
+    id: &str,
+    value: &Discriminator,
+    location: &str,
+) -> ContractResult<()> {
+    if value.attribute.is_empty() || value.cases.is_empty() {
+        return Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            location,
+            "discriminator",
+        ));
+    }
+    for target in value.cases.values() {
+        if !bundle.models.contains_key(target) {
+            return Err(error(id, ErrorReason::DanglingReference, location, target));
+        }
+    }
+    Ok(())
+}
+
+fn compositor(
+    id: &str,
+    group: &Compositor,
+    members: &BTreeSet<&str>,
+    location: &str,
+) -> ContractResult<()> {
+    let (children, min, max) = match group {
+        Compositor::Sequence { members, min, max } | Compositor::Choice { members, min, max } => {
+            (members, min, max)
+        }
+    };
+    if children.is_empty() || max.is_some_and(|max| max < *min) {
+        return Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            location,
+            "compositor bounds/members",
+        ));
+    }
+    for (index, member) in children.iter().enumerate() {
+        let path = format!("{location}/members/{index}");
+        match member {
+            CompositorMember::Attribute(name) if !members.contains(name.as_str()) => {
+                return Err(error(id, ErrorReason::UnsupportedMapping, &path, name));
+            }
+            CompositorMember::Group(group) => compositor(id, group, members, &path)?,
+            _ => (),
+        }
+    }
+    Ok(())
+}
+
+/// Compile only the requested model. Bundle loading/graph validation remains the
+/// loader's responsibility; referenced discriminator targets are checked here.
+pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projection> {
+    let base = format!("/models/{}", pointer(id));
+    let model = bundle
+        .models
+        .get(id)
+        .ok_or_else(|| error(id, ErrorReason::DanglingReference, &base, id))?;
+    let path = format!("{base}/mappings/xml");
+    let mapping = model
+        .mappings
+        .xml
+        .as_ref()
+        .ok_or_else(|| error(id, ErrorReason::UnsupportedFormat, &path, "xml"))?;
+    namespace(id, &mapping.namespace, &format!("{path}/namespace"))?;
+    if mapping.root.as_ref().is_some_and(|r| r.element.is_empty()) {
+        return Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            &format!("{path}/root"),
+            "root",
+        ));
+    }
+    let attributes: BTreeMap<_, _> = model
+        .attributes
+        .iter()
+        .map(|a| (a.name.as_str(), a))
+        .collect();
+    let mut operations = vec![Operation::Root {
+        element: mapping.root.as_ref().map(|r| r.element.clone()),
+        namespace: mapping.namespace.clone(),
+    }];
+    let mut element_members = BTreeSet::new();
+    let mut mapped = BTreeSet::new();
+    for (index, rule) in mapping.rules.iter().enumerate() {
+        let location = format!("{path}/rules/{index}");
+        let attribute = attributes.get(rule.to.as_str()).ok_or_else(|| {
+            error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{location}/to"),
+                &rule.to,
+            )
+        })?;
+        if !mapped.insert(rule.to.as_str()) {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &location,
+                "duplicate member mapping",
+            ));
+        }
+        namespace(id, &rule.namespace, &format!("{location}/namespace"))?;
+        let aliases = rule.name.clone().unwrap_or_default();
+        if (rule.kind == XmlRuleKind::Content && rule.name.is_some())
+            || (rule.kind != XmlRuleKind::Content
+                && (aliases.is_empty() || aliases.iter().any(String::is_empty)))
+            || aliases.iter().collect::<BTreeSet<_>>().len() != aliases.len()
+        {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{location}/name"),
+                "name aliases",
+            ));
+        }
+        if rule
+            .prefix
+            .as_ref()
+            .is_some_and(|p| p.is_empty() || p.contains(':'))
+        {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{location}/prefix"),
+                "prefix",
+            ));
+        }
+        if rule.kind == XmlRuleKind::Attribute && rule.cdata == Some(true) {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{location}/cdata"),
+                "cdata on attribute",
+            ));
+        }
+        if let (Some(a), Some(b)) = (&rule.discriminator, &attribute.discriminator) {
+            if a != b {
+                return Err(error(
+                    id,
+                    ErrorReason::UnsupportedMapping,
+                    &format!("{location}/discriminator"),
+                    "conflicting discriminator",
+                ));
+            }
+        }
+        let selected = rule
+            .discriminator
+            .as_ref()
+            .or(attribute.discriminator.as_ref());
+        if let Some(value) = selected {
+            discriminator(bundle, id, value, &format!("{location}/discriminator"))?;
+        }
+        if rule.kind == XmlRuleKind::Element {
+            element_members.insert(rule.to.as_str());
+        }
+        operations.push(Operation::Field(Box::new(Field {
+            member: rule.to.clone(),
+            attribute: (*attribute).clone(),
+            value_type: attribute.value_type.clone(),
+            kind: rule.kind.clone(),
+            aliases,
+            namespace: rule.namespace.clone(),
+            prefix: rule.prefix.clone(),
+            cdata: rule.cdata.unwrap_or(false),
+            render: rule.render.clone(),
+            discriminator: selected.cloned(),
+        })));
+    }
+    if let Some(group) = &mapping.sequence {
+        if !matches!(group, Compositor::Sequence { .. }) {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{path}/sequence"),
+                "sequence",
+            ));
+        }
+        compositor(id, group, &element_members, &format!("{path}/sequence"))?;
+        operations.push(Operation::Sequence(group.clone()));
+    }
+    if let Some(group) = &mapping.choice {
+        if !matches!(group, Compositor::Choice { .. }) {
+            return Err(error(
+                id,
+                ErrorReason::UnsupportedMapping,
+                &format!("{path}/choice"),
+                "choice",
+            ));
+        }
+        compositor(id, group, &element_members, &format!("{path}/choice"))?;
+        operations.push(Operation::Choice(group.clone()));
+    }
+    if let Some(order) = &model.ordered_content {
+        if attributes.contains_key("__lml_content") {
+            return Err(error(
+                id,
+                ErrorReason::ReservedMember,
+                &base,
+                "__lml_content",
+            ));
+        }
+        if order.member != "__lml_content" || order.version != 1 {
+            return Err(error(
+                id,
+                ErrorReason::InvalidOrderedContent,
+                &format!("{base}/ordered_content"),
+                "ordered_content",
+            ));
+        }
+        operations.push(Operation::InstanceOrder {
+            member: order.member.clone(),
+        });
+    }
+    Ok(Projection {
+        model_id: id.into(),
+        operations,
+    })
+}
+
+/// Validate instance references before an adapter emits anything. Counts are
+/// supplied by generated typed field accessors, never inferred from schema data.
+/// The returned tokens retain literal text and every interleaving unchanged.
+pub fn validate_order<'a>(
+    projection: &Projection,
+    tokens: &'a [ContentToken],
+    counts: &BTreeMap<String, usize>,
+) -> ContractResult<&'a [ContentToken]> {
+    let id = &projection.model_id;
+    let fail = |index, detail: &str| {
+        error(
+            id,
+            ErrorReason::InvalidOrderedContent,
+            &format!("/__lml_content/{index}"),
+            detail,
+        )
+    };
+    if !projection
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::InstanceOrder { .. }))
+    {
+        return Err(fail(0, "ordered_content is not declared"));
+    }
+    for op in &projection.operations {
+        if let Operation::Field(field) = op {
+            if matches!(field.attribute.collection, Collection::Scalar(_))
+                && counts.get(&field.member).copied().unwrap_or(0) > 1
+            {
+                return Err(fail(0, &field.member));
+            }
+        }
+    }
+    let mut seen = BTreeSet::new();
+    for (position, token) in tokens.iter().enumerate() {
+        let (member, index, element) = match token {
+            ContentToken::Element { attribute, index } => (attribute, index, true),
+            ContentToken::Text {
+                source: TextSource::Member { attribute, index },
+            }
+            | ContentToken::Cdata {
+                source: TextSource::Member { attribute, index },
+            } => (attribute, index, false),
+            _ => continue,
+        };
+        let field = projection
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::Field(field) if field.member == *member => Some(field),
+                _ => None,
+            })
+            .ok_or_else(|| fail(position, member))?;
+        if (element && field.kind != XmlRuleKind::Element)
+            || (!element && field.kind != XmlRuleKind::Content)
+            || !counts
+                .get(member)
+                .is_some_and(|count| (*index as u128) < (*count as u128))
+            || !seen.insert((member, index))
+        {
+            return Err(fail(position, member));
+        }
+    }
+    // Dropping a mapped value would silently produce a partial artifact.
+    for op in &projection.operations {
+        if let Operation::Field(field) = op {
+            if field.kind != XmlRuleKind::Attribute {
+                for index in 0..counts.get(&field.member).copied().unwrap_or(0) {
+                    if !seen.contains(&(&field.member, &(index as u64))) {
+                        return Err(fail(tokens.len(), &field.member));
+                    }
+                }
+            }
+        }
+    }
+    Ok(tokens)
+}
