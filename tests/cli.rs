@@ -184,3 +184,16 @@ fn invalid_cli_input_fails_without_artifacts() {
     assert!(!invoke("generate", &input, &out, None).status.success());
     assert!(!out.exists());
 }
+
+#[test]
+fn manifest_reports_generated_capabilities_instead_of_source_formats() {
+    let mut input: serde_json::Value = serde_json::from_slice(&source()).unwrap();
+    input["capabilities"] = json!(["json", "xml"]);
+    input["models"]["Book@default"]["mappings"]["xml"] =
+        json!({"root":{"element":"book"},"namespace":{"mode":"inherit"},"rules":[]});
+    let snapshot = lml::load(&serde_json::to_vec(&input).unwrap(), InputFormat::Json).unwrap();
+    let artifacts = Artifacts::generate(&snapshot).unwrap();
+    assert_eq!(artifacts.manifest.capabilities, vec!["json"]);
+    assert_eq!(artifacts.manifest.lml_checksum, snapshot.checksum());
+    assert!(!artifacts.files.contains_key("xml_codecs.rs"));
+}

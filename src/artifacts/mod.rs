@@ -39,9 +39,9 @@ impl Artifacts {
             }
         }
         files.insert("mod.rs".into(), "pub use lutaml_model::{contracts, values};\npub mod models;\npub mod parg_bindings;\npub mod json_codecs;\n".into());
-        let mut capabilities = bundle.capabilities.clone();
-        capabilities.sort();
-        capabilities.dedup();
+        // This artifact contains JSON codecs; source XML declarations do not
+        // imply an available XML implementation in the generated consumer.
+        let capabilities = vec!["json".into()];
         let manifest = Manifest {
             manifest: 1,
             lml_checksum: snapshot.checksum().into(),

@@ -21,6 +21,7 @@ no application grammar. Custom bindings remain explicit emitter APIs.
 Manifest identity uses the original loaded LML wire checksum. Generator identity
 pins emitter source/runtime templates; the runtime dependency pin hashes this
 crate's Cargo.lock, shared contracts and exact-value implementation, in that order.
+Manifest capabilities describe generated JSON codecs; XML source declarations do not advertise an XML runtime.
 No corpus is implicitly claimed: the corpus list is empty for this CLI. Generated
 files and dependencies are sorted. The manifest digest is external and includes
 all canonical manifest fields. Artifact directories must not be modified
