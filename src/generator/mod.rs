@@ -56,63 +56,199 @@ pub fn member_identifier(s: &str) -> String {
     }
     result
 }
-/// Stable model-ID to Rust type-name map, with runtime-name and model collisions
-/// rejected using the same rules as generated structs and PARG constructors.
+/// Every name the generated crate imports, defines at module level, or uses
+/// unqualified in a position a same-named model type would shadow. A model whose
+/// Rust name is one of these is refused with `ReservedMember` instead of
+/// producing a crate that does not compile. `tests/generator.rs` derives the
+/// candidate set from the emitted sources, so a new runtime item cannot be added
+/// without deciding here whether it is reserved.
+pub const RESERVED_NAMES: &[&str] = &[
+    // Defined by generator/runtime.rs.txt.
+    "Presence",
+    "ValidationError",
+    "ContentToken",
+    "TextSource",
+    "ContentTokenWire",
+    "QName",
+    "ExactInteger",
+    "ExactDecimal",
+    "PortableFloat",
+    // Imported by the generated files.
+    "Serialize",
+    "Deserialize",
+    "ContractError",
+    "ContractResult",
+    "ErrorReason",
+    "Value",
+    "Map",
+    // Prelude and std names used unqualified by emitted code.
+    "String",
+    "Vec",
+    "Box",
+    "Result",
+    "Option",
+    "Default",
+    "Eq",
+    "PartialEq",
+    "Ord",
+    "PartialOrd",
+    "Clone",
+    "Copy",
+    "Debug",
+    "ToString",
+    "Sized",
+    "Send",
+    "Sync",
+    // Crate and module roots used in emitted paths.
+    "serde",
+    "serde_json",
+    "std",
+    "core",
+    "alloc",
+    "lutaml_model",
+    // Primitive types.
+    "bool",
+    "str",
+    "char",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "i128",
+    "isize",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "u128",
+    "usize",
+    "f32",
+    "f64",
+];
+/// Stable model-ID to Rust type-name map. A model name shared by several
+/// registers (`Foo@a`, `Foo@b`) is disambiguated deterministically: every model
+/// in that group takes the suffix `_<register>`, independent of map order. Names
+/// that are reserved, or that still collide, are refused.
 pub fn model_names(bundle: &Bundle) -> ContractResult<BTreeMap<String, String>> {
-    let mut used: BTreeSet<String> = [
-        "Presence",
-        "ValidationError",
-        "ContentToken",
-        "TextSource",
-        "QName",
-        "ExactInteger",
-        "ExactDecimal",
-        "PortableFloat",
-        "Serialize",
-        "Deserialize",
-        "String",
-        "Vec",
-        "Box",
-        "Result",
-        "Option",
-        "Default",
-        "bool",
-        "str",
-        "char",
-        "i8",
-        "i16",
-        "i32",
-        "i64",
-        "i128",
-        "isize",
-        "u8",
-        "u16",
-        "u32",
-        "u64",
-        "u128",
-        "usize",
-        "f32",
-        "f64",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let mut groups: BTreeMap<String, usize> = BTreeMap::new();
+    for m in bundle.models.values() {
+        *groups.entry(member_identifier(&m.model)).or_default() += 1;
+    }
+    let mut used: BTreeSet<String> = BTreeSet::new();
     bundle
         .models
         .iter()
         .map(|(id, m)| {
-            let name = member_identifier(&m.model);
+            let base = member_identifier(&m.model);
+            let name = if groups[&base] > 1 {
+                format!("{base}_{}", member_identifier(&m.register))
+            } else {
+                base
+            };
+            if RESERVED_NAMES.contains(&name.as_str()) {
+                return Err(error(
+                    ErrorReason::ReservedMember,
+                    id,
+                    "",
+                    &format!("Rust type name {name} is reserved by the generated runtime"),
+                ));
+            }
             if !used.insert(name.clone()) {
                 return Err(error(
                     ErrorReason::ReservedMember,
                     id,
                     "",
-                    "Rust type name collision",
+                    &format!("Rust type name collision: {name}"),
                 ));
             }
             Ok((id.clone(), name))
         })
         .collect()
+}
+/// Collect the discriminators declared by rules that target `member`, in every
+/// format, recursing through XML groups and sequences.
+fn rule_discriminators(
+    rules: &[XmlRule],
+    member: &str,
+    from: &'static str,
+    out: &mut Vec<(&'static str, Discriminator)>,
+) {
+    for rule in rules {
+        if rule.to == member {
+            if let Some(d) = &rule.discriminator {
+                out.push((from, d.clone()));
+            }
+        }
+        if let Some(members) = &rule.members {
+            rule_discriminators(members, member, from, out);
+        }
+    }
+}
+/// The bundle with each polymorphic attribute's governing discriminator hoisted
+/// to the attribute. Ruby exports key-value polymorphism on the mapping rule
+/// (`mappings.json.rules[].discriminator`) and the case models declare the tag
+/// attribute; the attribute-level and every rule-level source must agree, as in
+/// the TypeScript generator's `effectiveDiscriminator`. Only plain model-typed
+/// attributes are hoisted, so a rule-level discriminator elsewhere still
+/// reaches the explicit refusal in `generate_models`.
+pub fn effective_discriminators(bundle: &Bundle) -> ContractResult<Bundle> {
+    let mut out = bundle.clone();
+    for (id, m) in &mut out.models {
+        let mut sources: Vec<(String, &'static str, Discriminator)> = Vec::new();
+        for attribute in &m.attributes {
+            let mut found = Vec::new();
+            if let Some(xml) = &m.mappings.xml {
+                rule_discriminators(&xml.rules, &attribute.name, "xml rule", &mut found);
+                if let Some(sequence) = &xml.sequence {
+                    rule_discriminators(sequence, &attribute.name, "xml rule", &mut found);
+                }
+            }
+            for (mapping, from) in [
+                (&m.mappings.json, "json rule"),
+                (&m.mappings.yaml, "yaml rule"),
+            ] {
+                if let Some(mapping) = mapping {
+                    rule_discriminators(&mapping.rules, &attribute.name, from, &mut found);
+                }
+            }
+            sources.extend(
+                found
+                    .into_iter()
+                    .map(|(f, d)| (attribute.name.clone(), f, d)),
+            );
+        }
+        for attribute in &mut m.attributes {
+            let mut all: Vec<(&'static str, Discriminator)> = Vec::new();
+            if let Some(d) = &attribute.discriminator {
+                all.push(("attribute", d.clone()));
+            }
+            all.extend(
+                sources
+                    .iter()
+                    .filter(|(to, _, _)| *to == attribute.name)
+                    .map(|(_, from, d)| (*from, d.clone())),
+            );
+            let Some((first_from, first)) = all.first().cloned() else {
+                continue;
+            };
+            if let Some((from, _)) = all.iter().find(|(_, d)| *d != first) {
+                return Err(error(
+                    ErrorReason::UnsupportedMapping,
+                    id,
+                    &attribute.name,
+                    &format!("discriminator of the {first_from} disagrees with the {from}"),
+                ));
+            }
+            if attribute.discriminator.is_none()
+                && attribute.reference.is_none()
+                && attribute.enumeration.is_none()
+                && matches!(attribute.value_type, TypeRef::Model { .. })
+            {
+                attribute.discriminator = Some(first);
+            }
+        }
+    }
+    Ok(out)
 }
 fn builtin(t: &BuiltinType, id: &str, field: &str) -> ContractResult<String> {
     Ok(match t {
@@ -195,6 +331,8 @@ impl ModelEmitter for RustEmitter {
         bundle: &Bundle,
         bindings: &TypeBindings,
     ) -> ContractResult<SourceMap> {
+        let hoisted = effective_discriminators(bundle)?;
+        let bundle = &hoisted;
         let names = model_names(bundle)?;
         let mut output = include_str!("runtime.rs.txt").to_owned();
         if bundle.models.values().flat_map(|m| &m.attributes).any(|a| {
@@ -322,41 +460,7 @@ impl ModelEmitter for RustEmitter {
                             "union type collision",
                         ));
                     }
-                    writeln!(output,"#[allow(non_camel_case_types)]\n#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(tag = {})]\npub enum {ty} {{",quote(&d.attribute)).unwrap();
-                    for (index, (tag, target)) in d.cases.iter().enumerate() {
-                        let target_name = names.get(target).ok_or_else(|| {
-                            error(
-                                ErrorReason::DanglingReference,
-                                id,
-                                &a.name,
-                                "missing discriminator target",
-                            )
-                        })?;
-                        if bundle.models[target]
-                            .attributes
-                            .iter()
-                            .any(|a| a.name == d.attribute)
-                        {
-                            return Err(error(
-                                ErrorReason::ReservedMember,
-                                id,
-                                &a.name,
-                                "discriminator tag collides with payload member",
-                            ));
-                        }
-                        writeln!(
-                            output,
-                            "#[serde(rename = {})] Case{index}(Box<{target_name}>),",
-                            quote(tag)
-                        )
-                        .unwrap();
-                    }
-                    output.push_str("}\n");
-                    writeln!(output,"impl {ty} {{ pub fn validate(&self)->Result<(),ValidationError>{{ match self {{").unwrap();
-                    for index in 0..d.cases.len() {
-                        writeln!(output, "Self::Case{index}(v) => v.validate(),").unwrap();
-                    }
-                    output.push_str("} } }\n");
+                    emit_union(&mut output, &ty, id, &a.name, d, &names, bundle)?;
                 }
                 if let Some(values) = &a.enumeration {
                     if values.is_empty()
@@ -531,6 +635,104 @@ impl ModelEmitter for RustEmitter {
         Ok(BTreeMap::from([("models.rs".into(), output)]))
     }
 }
+/// Emit the closed union for one polymorphic attribute. The wire form is the
+/// case model's object plus the discriminator member. A case model that
+/// declares the discriminator attribute (Ruby's contract) keeps it as an
+/// ordinary member whose value must equal the case's tag; a case model that
+/// does not declare it has the tag added and removed around the payload.
+fn emit_union(
+    output: &mut String,
+    ty: &str,
+    id: &str,
+    field: &str,
+    d: &Discriminator,
+    names: &BTreeMap<String, String>,
+    bundle: &Bundle,
+) -> ContractResult<()> {
+    let mut cases = Vec::new();
+    for (tag, target) in &d.cases {
+        let target_name = names.get(target).ok_or_else(|| {
+            error(
+                ErrorReason::DanglingReference,
+                id,
+                field,
+                "missing discriminator target",
+            )
+        })?;
+        let declared = bundle.models[target]
+            .attributes
+            .iter()
+            .find(|a| a.name == d.attribute);
+        if let Some(a) = declared {
+            let plain = matches!(
+                a.value_type,
+                TypeRef::Builtin {
+                    name: BuiltinType::String | BuiltinType::Token | BuiltinType::Symbol
+                }
+            ) && matches!(a.collection, Collection::Scalar(_))
+                && a.enumeration.is_none()
+                && a.discriminator.is_none()
+                && a.reference.is_none();
+            if !plain {
+                return Err(error(
+                    ErrorReason::UnsupportedMapping,
+                    id,
+                    field,
+                    "discriminator attribute on a case model must be a plain string member",
+                ));
+            }
+        }
+        cases.push((
+            tag,
+            target_name,
+            declared.map(|a| member_identifier(&a.name)),
+        ));
+    }
+    let tag_key = quote(&d.attribute);
+    writeln!(
+        output,
+        "#[allow(non_camel_case_types)]\n#[derive(Clone, Debug, PartialEq, Eq)]\npub enum {ty} {{"
+    )
+    .unwrap();
+    for (index, (_, target_name, _)) in cases.iter().enumerate() {
+        writeln!(output, "Case{index}(Box<{target_name}>),").unwrap();
+    }
+    output.push_str("}\n");
+    writeln!(output, "impl Serialize for {ty} {{ fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{{ let (tag,payload)=match self {{").unwrap();
+    for (index, (tag, _, _)) in cases.iter().enumerate() {
+        writeln!(
+            output,
+            "Self::Case{index}(v) => ({}, serde_json::to_value(v)),",
+            quote(tag)
+        )
+        .unwrap();
+    }
+    writeln!(output, "}}; let mut payload=match payload.map_err(serde::ser::Error::custom)? {{ serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom(\"discriminator payload must be an object\")) }}; payload.insert({tag_key}.into(),serde_json::Value::String(tag.into())); serde_json::Value::Object(payload).serialize(s) }} }}").unwrap();
+    writeln!(output, "impl<'de> Deserialize<'de> for {ty} {{ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{{ let mut payload=match serde_json::Value::deserialize(d)? {{ serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom(\"expected object\")) }}; let tag=match payload.get({tag_key}) {{ Some(serde_json::Value::String(t))=>t.clone(), _=>return Err(serde::de::Error::custom(\"missing discriminator\")) }}; match tag.as_str() {{").unwrap();
+    for (index, (tag, _, declared)) in cases.iter().enumerate() {
+        let strip = if declared.is_some() {
+            ""
+        } else {
+            &format!("payload.remove({tag_key}); ")
+        };
+        writeln!(output, "{} => {{ {strip}Ok(Self::Case{index}(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) }},", quote(tag)).unwrap();
+    }
+    output.push_str("_ => Err(serde::de::Error::custom(\"unknown discriminator\")), } } }\n");
+    writeln!(
+        output,
+        "impl {ty} {{ pub fn validate(&self)->Result<(),ValidationError>{{ match self {{"
+    )
+    .unwrap();
+    for (index, (tag, _, declared)) in cases.iter().enumerate() {
+        write!(output, "Self::Case{index}(v) => {{ v.validate()?; ").unwrap();
+        if let Some(member) = declared {
+            write!(output, "if let Presence::Value(t)=&v.{member} {{ if t!={} {{ return Err(invalid({}, {}, \"unknown_discriminator\")); }} }} ", quote(tag), quote(id), quote(field)).unwrap();
+        }
+        output.push_str("Ok(()) },\n");
+    }
+    output.push_str("} } }\n");
+    Ok(())
+}
 fn same_enum_literal(a: &Attribute, left: &NeutralValue, right: &NeutralValue) -> bool {
     let left = enum_literal(a, left);
     let right = enum_literal(a, right);
@@ -684,6 +886,8 @@ impl PargBindingEmitter for RustEmitter {
         bundle: &Bundle,
         bindings: &[PargClassBinding],
     ) -> ContractResult<SourceMap> {
+        let hoisted = effective_discriminators(bundle)?;
+        let bundle = &hoisted;
         let names = model_names(bundle)?;
         let mut output=String::from("// Compile-time PARG capture constructors; parsing and application behavior are external.\nuse super::models::*;\n");
         let mut used = BTreeSet::new();

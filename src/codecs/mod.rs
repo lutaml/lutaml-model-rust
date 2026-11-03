@@ -361,6 +361,8 @@ impl JsonCodecEmitter for RustJsonEmitter {
         // Sharing the actual model emitter validation prevents a codec artifact that
         // claims successful support for a type the static model cannot represent.
         crate::generator::RustEmitter.generate_models(bundle, bindings)?;
+        let hoisted = crate::generator::effective_discriminators(bundle)?;
+        let bundle = &hoisted;
         if bindings.values().any(|b| b.codec.is_some()) {
             return Err(fail(
                 "",
@@ -371,8 +373,25 @@ impl JsonCodecEmitter for RustJsonEmitter {
 
         let names = crate::generator::model_names(bundle)?;
         let mut out = include_str!("runtime.rs.txt").to_owned();
+        // Role prefixes (read_, write_, decode_, hydrate_, unkey_, encode_, key_)
+        // never prefix one another, so model names cannot alias across roles;
+        // this check proves it for the emitted set instead of assuming it.
+        let mut functions = BTreeSet::new();
         for (id, model) in &bundle.models {
             let name = &names[id];
+            for function in [
+                format!("read_{name}_json"),
+                format!("write_{name}_json"),
+                format!("decode_{name}"),
+                format!("hydrate_{name}"),
+                format!("unkey_{name}"),
+                format!("encode_{name}"),
+                format!("key_{name}"),
+            ] {
+                if !functions.insert(function) {
+                    return Err(fail(id, "", "emitted function name collision"));
+                }
+            }
             if model
                 .mappings
                 .json
@@ -399,7 +418,7 @@ impl JsonCodecEmitter for RustJsonEmitter {
             writeln!(out,"#[allow(non_snake_case)]\nfn decode_{name}(input:Value)->ContractResult<Value>{{let mut wire=object(input,{})?; let mut data=Map::new();",q(id)).unwrap();
             if keyed.as_ref().is_some_and(|k| k.root) {
                 let k = keyed.as_ref().unwrap();
-                writeln!(out,"data.insert({}.into(), decode_{name}_keyed(Value::Object(std::mem::take(&mut wire)))?);",q(&k.attribute.name)).unwrap();
+                writeln!(out,"data.insert({}.into(), unkey_{name}(Value::Object(std::mem::take(&mut wire)))?);",q(&k.attribute.name)).unwrap();
             } else {
                 for rule in &rules {
                     out.push_str("{ let mut selected=None;\n");
@@ -417,15 +436,15 @@ impl JsonCodecEmitter for RustJsonEmitter {
             if model.ordered_content.is_some() {
                 out.push_str("if let Some(v)=wire.remove(\"__lml_content\"){data.insert(\"__lml_content\".into(),v); }\n");
             }
-            writeln!(out,"if !wire.is_empty(){{return Err(failure(ErrorReason::InvalidDocument,{}, \"\", \"/input\", \"unknown wire key\"));}} decode_{name}_data(data) }}",q(id)).unwrap();
-            writeln!(out,"#[allow(non_snake_case)]\nfn decode_{name}_data(mut data:Map<String,Value>)->ContractResult<Value>{{").unwrap();
+            writeln!(out,"if !wire.is_empty(){{return Err(failure(ErrorReason::InvalidDocument,{}, \"\", \"/input\", \"unknown wire key\"));}} hydrate_{name}(data) }}",q(id)).unwrap();
+            writeln!(out,"#[allow(non_snake_case)]\nfn hydrate_{name}(mut data:Map<String,Value>)->ContractResult<Value>{{").unwrap();
             for a in &model.attributes {
                 writeln!(out, "if let Some(mut v)=data.remove({}){{", q(&a.name)).unwrap();
                 if keyed
                     .as_ref()
                     .is_some_and(|k| !k.root && k.attribute.name == a.name)
                 {
-                    writeln!(out, "if !v.is_null(){{v=decode_{name}_keyed(v)?;}}").unwrap();
+                    writeln!(out, "if !v.is_null(){{v=unkey_{name}(v)?;}}").unwrap();
                 } else if !keyed
                     .as_ref()
                     .is_some_and(|k| k.root && k.attribute.name == a.name)
@@ -438,7 +457,7 @@ impl JsonCodecEmitter for RustJsonEmitter {
             writeln!(out,"#[allow(non_snake_case)]\nfn encode_{name}(input:Value)->ContractResult<Value>{{let mut data=object(input,{})?;let mut wire=Map::new();",q(id)).unwrap();
             if keyed.as_ref().is_some_and(|k| k.root) {
                 let k = keyed.as_ref().unwrap();
-                writeln!(out,"if let Some(v)=data.remove({}){{return encode_{name}_keyed(v);}}Ok(Value::Object(wire))}}",q(&k.attribute.name)).unwrap();
+                writeln!(out,"if let Some(v)=data.remove({}){{return key_{name}(v);}}Ok(Value::Object(wire))}}",q(&k.attribute.name)).unwrap();
             } else {
                 for rule in &rules {
                     let a = model.attributes.iter().find(|a| a.name == rule.to).unwrap();
@@ -450,7 +469,7 @@ impl JsonCodecEmitter for RustJsonEmitter {
                     .unwrap();
                     policy(&mut out, rule, a);
                     if keyed.as_ref().is_some_and(|k| k.attribute.name == a.name) {
-                        writeln!(out, "if !v.is_null(){{v=encode_{name}_keyed(v)?;}}").unwrap();
+                        writeln!(out, "if !v.is_null(){{v=key_{name}(v)?;}}").unwrap();
                     } else {
                         member(&mut out, a, id, &names, true)?;
                     }
@@ -487,7 +506,7 @@ fn emit_keyed(
         .unwrap()
         .0;
     let keyonly = k.paths.len() == 1;
-    writeln!(out,"#[allow(non_snake_case)]\nfn decode_{parent}_keyed(input:Value)->ContractResult<Value>{{let input=object(input,{})?;let mut items=Vec::new();for (key,body)in input{{",q(id)).unwrap();
+    writeln!(out,"#[allow(non_snake_case)]\nfn unkey_{parent}(input:Value)->ContractResult<Value>{{let input=object(input,{})?;let mut items=Vec::new();for (key,body)in input{{",q(id)).unwrap();
     if keyonly {
         writeln!(
             out,
@@ -519,10 +538,10 @@ fn emit_keyed(
     if keyonly {
         out.push_str("items.push(Value::Object(item));\n");
     } else {
-        writeln!(out, "items.push(decode_{child}_data(item)?);").unwrap();
+        writeln!(out, "items.push(hydrate_{child}(item)?);").unwrap();
     }
     out.push_str("}Ok(Value::Array(items))}\n");
-    writeln!(out,"#[allow(non_snake_case)]\nfn encode_{parent}_keyed(input:Value)->ContractResult<Value>{{let items=input.as_array().ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/output\", \"keyed collection requires array\"))?;let mut result=Map::new();for item in items{{let mut item=object(item.clone(),{})?;let key=item.remove({}).and_then(|v|v.as_str().map(str::to_owned)).ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/output\", \"key member requires string\"))?;",q(id),q(&k.attribute.name),q(id),q(key),q(id),q(key)).unwrap();
+    writeln!(out,"#[allow(non_snake_case)]\nfn key_{parent}(input:Value)->ContractResult<Value>{{let items=input.as_array().ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/output\", \"keyed collection requires array\"))?;let mut result=Map::new();for item in items{{let mut item=object(item.clone(),{})?;let key=item.remove({}).and_then(|v|v.as_str().map(str::to_owned)).ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/output\", \"key member requires string\"))?;",q(id),q(&k.attribute.name),q(id),q(key),q(id),q(key)).unwrap();
     if keyonly {
         writeln!(out, "let body=encode_{child}(Value::Object(item))?;").unwrap();
     } else {

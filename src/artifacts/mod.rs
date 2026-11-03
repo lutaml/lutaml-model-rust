@@ -39,13 +39,15 @@ pub struct Artifacts {
 }
 impl Artifacts {
     pub fn generate(snapshot: &Snapshot) -> ArtifactResult<Self> {
+        Self::generate_with(snapshot, &TypeBindings::new())
+    }
+    pub fn generate_with(snapshot: &Snapshot, bindings: &TypeBindings) -> ArtifactResult<Self> {
         let bundle = snapshot.bundle()?;
-        let bindings = TypeBindings::new();
-        let mut files = RustEmitter.generate_models(&bundle, &bindings)?;
+        let mut files = RustEmitter.generate_models(&bundle, bindings)?;
         for (path, source) in RustEmitter
             .generate_parg_bindings(&bundle, &[])?
             .into_iter()
-            .chain(RustJsonEmitter.generate_json_codecs(&bundle, &bindings)?)
+            .chain(RustJsonEmitter.generate_json_codecs(&bundle, bindings)?)
         {
             if files.insert(path, source).is_some() {
                 return Err(invalid("duplicate generated path"));

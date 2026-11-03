@@ -20,7 +20,7 @@ pub struct QName { pub namespace: String, pub local: String }
 #[serde(transparent)]
 pub struct ExactInteger(String);
 impl ExactInteger {
- pub fn parse(s: &str) -> Result<Self, &'static str> { let digits=s.strip_prefix('-').unwrap_or(s); if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) { Err("invalid integer") } else { Ok(Self(s.into())) } }
+ pub fn parse(s: &str) -> Result<Self, &'static str> { let digits=s.strip_prefix(['-','+']).unwrap_or(s); if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) { Err("invalid integer") } else { Ok(Self(s.into())) } }
  pub fn as_str(&self)->&str { &self.0 }
 }
 impl<'de> Deserialize<'de> for ExactInteger { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
@@ -28,7 +28,7 @@ impl<'de> Deserialize<'de> for ExactInteger { fn deserialize<D:serde::Deserializ
 #[serde(transparent)]
 pub struct ExactDecimal(String);
 impl ExactDecimal {
- pub fn parse(s: &str) -> Result<Self, &'static str> { let digits=s.strip_prefix('-').unwrap_or(s); let mut parts=digits.split('.'); let whole=parts.next().unwrap_or(""); let fraction=parts.next(); if whole.is_empty() || !whole.bytes().all(|c|c.is_ascii_digit()) || parts.next().is_some() || fraction.is_some_and(|f| f.is_empty() || !f.bytes().all(|c|c.is_ascii_digit())) { Err("invalid decimal") } else { Ok(Self(s.into())) } }
+ pub fn parse(s: &str) -> Result<Self, &'static str> { let unsigned=s.strip_prefix(['-','+']).unwrap_or(s); let (whole,fraction)=unsigned.split_once('.').unwrap_or((unsigned,"")); let digits=|p:&str| p.bytes().all(|c|c.is_ascii_digit()); if (whole.is_empty() && fraction.is_empty()) || !digits(whole) || !digits(fraction) { Err("invalid decimal") } else { Ok(Self(s.into())) } }
  pub fn as_str(&self)->&str { &self.0 }
 }
 impl<'de> Deserialize<'de> for ExactDecimal { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
@@ -61,12 +61,35 @@ impl<'de> Deserialize<'de> for PortableFloat { fn deserialize<D:serde::Deseriali
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum TextSource { Member { attribute: String, index: u64 }, Literal { literal: String } }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContentToken {
  Element { attribute: String, index: u64 },
  Text { #[serde(flatten)] source: TextSource },
  Cdata { #[serde(flatten)] source: TextSource },
+}
+// serde cannot combine deny_unknown_fields with flatten, so tokens are read
+// through one closed wire shape and then checked against the token kind.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContentTokenWire { kind: String, attribute: Option<String>, index: Option<u64>, literal: Option<String> }
+impl<'de> Deserialize<'de> for ContentToken {
+ fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+  let w = ContentTokenWire::deserialize(d)?;
+  let bad = |m: &str| serde::de::Error::custom(m);
+  let source = match (w.attribute, w.index, w.literal) {
+   (Some(attribute), Some(index), None) => TextSource::Member { attribute, index },
+   (None, None, Some(literal)) => TextSource::Literal { literal },
+   _ => return Err(bad("content token needs exactly one of attribute+index or literal")),
+  };
+  match (w.kind.as_str(), source) {
+   ("element", TextSource::Member { attribute, index }) => Ok(Self::Element { attribute, index }),
+   ("element", _) => Err(bad("element token needs attribute and index only")),
+   ("text", source) => Ok(Self::Text { source }),
+   ("cdata", source) => Ok(Self::Cdata { source }),
+   _ => Err(bad("unknown content token kind")),
+  }
+ }
 }
 impl ContentToken {
  pub fn reference(&self) -> Option<(&str,u64)> { match self {
@@ -80,9 +103,12 @@ impl ContentToken {
 pub struct Leaf {
 #[serde(rename = "text", default, skip_serializing_if = "Presence::is_absent")]
 pub text: Presence<String>,
+#[serde(rename = "kind", default, skip_serializing_if = "Presence::is_absent")]
+pub kind: Presence<String>,
 }
 impl Default for Leaf { fn default()->Self { Self {
 text: Presence::Absent,
+kind: Presence::Absent,
 } } }
 impl Leaf {
 pub fn apply_defaults(&mut self)->Result<(),ValidationError>{
@@ -105,15 +131,22 @@ if v == serde_json::from_str::<bool>("false").map_err(serde::de::Error::custom)?
 if v == serde_json::from_str::<bool>("true").map_err(serde::de::Error::custom)? { return Ok(Self::Case1); }
 Err(serde::de::Error::custom("invalid enum value")) } }
 #[allow(non_camel_case_types)]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Node_item_Union {
-#[serde(rename = "leaf")] Case0(Box<Leaf>),
-#[serde(rename = "node")] Case1(Box<Node>),
+Case0(Box<Leaf>),
+Case1(Box<Node>),
 }
+impl Serialize for Node_item_Union { fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{ let (tag,payload)=match self {
+Self::Case0(v) => ("leaf", serde_json::to_value(v)),
+Self::Case1(v) => ("node", serde_json::to_value(v)),
+}; let mut payload=match payload.map_err(serde::ser::Error::custom)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom("discriminator payload must be an object")) }; payload.insert("kind".into(),serde_json::Value::String(tag.into())); serde_json::Value::Object(payload).serialize(s) } }
+impl<'de> Deserialize<'de> for Node_item_Union { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ let mut payload=match serde_json::Value::deserialize(d)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom("expected object")) }; let tag=match payload.get("kind") { Some(serde_json::Value::String(t))=>t.clone(), _=>return Err(serde::de::Error::custom("missing discriminator")) }; match tag.as_str() {
+"leaf" => { Ok(Self::Case0(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+"node" => { payload.remove("kind"); Ok(Self::Case1(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+_ => Err(serde::de::Error::custom("unknown discriminator")), } } }
 impl Node_item_Union { pub fn validate(&self)->Result<(),ValidationError>{ match self {
-Self::Case0(v) => v.validate(),
-Self::Case1(v) => v.validate(),
+Self::Case0(v) => { v.validate()?; if let Presence::Value(t)=&v.kind { if t!="leaf" { return Err(invalid("Node@default", "item", "unknown_discriminator")); } } Ok(()) },
+Self::Case1(v) => { v.validate()?; Ok(()) },
 } } }
 #[allow(non_camel_case_types, non_snake_case)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
