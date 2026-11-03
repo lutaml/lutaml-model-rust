@@ -120,6 +120,8 @@ pub(super) enum Child {
     Model(String),
     Poly {
         base: String,
+        /// The generated `<Model>_<member>_Union` holding the field.
+        union: String,
         names: Vec<String>,
         accept: Vec<String>,
         attribute: String,
@@ -431,6 +433,7 @@ fn field_plan(
                             (
                                 Child::Poly {
                                     base,
+                                    union: format!("{}_{ident}_Union", names[id]),
                                     names: rule.name.clone().unwrap_or_default(),
                                     accept: accept_list(&[dns.as_ref().map(|n| n.0.as_str())]),
                                     attribute: d.attribute.clone(),
@@ -568,21 +571,25 @@ pub(super) fn emit_reader(out: &mut String, p: &Plan) {
                 ),
                 Child::Poly {
                     base,
+                    union,
                     names,
                     accept,
                     attribute,
                     cases,
                 } => {
                     let mut arms = String::new();
-                    for (tag, case) in cases {
-                        if case == base {
-                            arms += &format!(
-                                "Some({}) => Box::new(read_{base}_el(doc, hit.ord, &hit.loc)?), ",
-                                q(tag)
-                            );
-                        } else {
-                            arms += &format!("Some({}) => Box::new(rt::retype::<{case}, {base}>(&read_{case}_el(doc, hit.ord, &hit.loc)?, &at)?), ", q(tag));
-                        }
+                    for (index, (tag, case)) in cases.iter().enumerate() {
+                        arms += &format!(
+                            "Some({}) => {union}::Case{index}(Box::new(read_{case}_el(doc, hit.ord, &hit.loc)?)), ",
+                            q(tag)
+                        );
+                    }
+                    // An absent tag reads as the base type, which the union can only
+                    // hold through the case that maps to it.
+                    if let Some(index) = cases.iter().position(|(_, case)| case == base) {
+                        arms += &format!(
+                            "None => {union}::Case{index}(Box::new(read_{base}_el(doc, hit.ord, &hit.loc)?)), "
+                        );
                     }
                     let dloc = format!(
                         "let dloc = format!(\"{{}}/@{{}}\", hit.loc, {});",
@@ -592,7 +599,7 @@ pub(super) fn emit_reader(out: &mut String, p: &Plan) {
                     (
                         format!("{at} {dloc}"),
                         format!(
-                            "{{ let tag = rt::discriminator(doc, hit.ord, {}, {}); let v: Box<{base}> = match tag.as_deref() {{ None => Box::new(read_{base}_el(doc, hit.ord, &hit.loc)?), {arms}Some(t) => return Err(rt::unknown_discriminator(&rt::Where {{ id: {id}, attribute: {}, rule: {first}, loc: &dloc }}, t)) }}; v }}",
+                            "{{ let tag = rt::discriminator(doc, hit.ord, {}, {}); let v: {union} = match tag.as_deref() {{ {arms}other => return Err(rt::unknown_discriminator(&rt::Where {{ id: {id}, attribute: {}, rule: {first}, loc: &dloc }}, other.unwrap_or(\"\"))) }}; v }}",
                             str_list(names),
                             str_list(accept),
                             q(&e.member)

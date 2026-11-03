@@ -230,6 +230,11 @@ fn overrides() -> BTreeMap<&'static str, Value> {
             "person-bad-integer",
             json!({"error": "invalid_document", "attribute": "age"}),
         ),
+        // The generated union cannot hold an absent tag: the base case fills it in.
+        (
+            "kennel-poly-missing-kind",
+            json!({"pet": {"kind": "animal", "name": "Tom"}, "owner": null}),
+        ),
         (
             "kennel-poly-unknown-kind",
             json!({"error": "unknown_discriminator"}),
@@ -319,7 +324,9 @@ fn writer_round_trips_every_ruby_read_value() {
     let eligible: Vec<&Value> = cases
         .iter()
         .filter(|c| {
-            c.get("expected_data").is_some() && !over.contains_key(c["id"].as_str().unwrap())
+            let id = c["id"].as_str().unwrap();
+            c.get("expected_data").is_some()
+                && (id == "kennel-poly-missing-kind" || !over.contains_key(id))
         })
         .collect();
     let reads = run(eligible
@@ -340,6 +347,9 @@ fn writer_round_trips_every_ruby_read_value() {
     for ((c, text), r) in eligible.iter().zip(&texts).zip(&back) {
         let id = c["id"].as_str().unwrap();
         let mut expected = c["expected_data"].clone();
+        if id == "kennel-poly-missing-kind" {
+            expected = over[id].clone();
+        }
         if c["model_id"] == PERSON {
             // An empty attribute is omitted; as_nil/as_blank write an empty element that reads back "".
             for m in ["id", "lang"] {

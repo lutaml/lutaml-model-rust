@@ -60,30 +60,14 @@ pub(super) fn emit_writer(out: &mut String, p: &Plan) {
 
     // Discriminated element rules choose the case writer by tag.
     for (i, e) in p.elems.iter().enumerate() {
-        if let Child::Poly {
-            base,
-            attribute,
-            cases,
-            ..
-        } = &e.child
-        {
+        if let Child::Poly { union, cases, .. } = &e.child {
             let mut arms = String::new();
-            for (tag, case) in cases {
-                if case == base {
-                    arms += &format!("Some({}) => write_{base}_el(x, name, ns, None), ", q(tag));
-                } else {
-                    arms += &format!(
-                        "Some({}) => {{ let c: {case} = rt::retype(x, &at)?; write_{case}_el(&c, name, ns, None) }}, ",
-                        q(tag)
-                    );
-                }
+            for (index, (_, case)) in cases.iter().enumerate() {
+                arms += &format!("{union}::Case{index}(c) => write_{case}_el(c, name, ns, None), ");
             }
             writeln!(
                 out,
-                "fn write_{name}_{i}_poly(x: &{base}, name: &str, ns: Option<&rt::NsOut>) -> ContractResult<{EL}> {{\n let at = rt::Where {{ id: {id}, attribute: {}, rule: {}, loc: \"/output\" }};\n match rt::tag_of(x, {}).as_deref() {{ None => write_{base}_el(x, name, ns, None), {arms}Some(t) => Err(rt::unknown_discriminator(&at, t)) }}\n}}",
-                q(&e.member),
-                q(&e.names[0]),
-                q(attribute)
+                "fn write_{name}_{i}_poly(x: &{union}, name: &str, ns: Option<&rt::NsOut>) -> ContractResult<{EL}> {{\n match x {{ {arms}}}\n}}"
             )
             .unwrap();
         }
