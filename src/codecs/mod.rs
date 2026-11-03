@@ -21,7 +21,7 @@ fn fail(id: &str, field: &str, detail: &str) -> Box<ContractError> {
     })
 }
 fn q(s: &str) -> String {
-    serde_json::to_string(s).expect("string serialization")
+    format!("{s:?}")
 }
 
 fn target(a: &Attribute) -> Option<&str> {

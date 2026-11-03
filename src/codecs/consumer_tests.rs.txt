@@ -58,4 +58,25 @@ use serde_json::json;
  assert_eq!(serde_json::from_str::<serde_json::Value>(&write_BigEnum_json(&big).unwrap()).unwrap(),json!({"number":"9007199254740993123456789"}));
  for wire in [r#"{"number":"3"}"#,r#"{"number":1}"#,r#"{"number":"9007199254740993123456789"}"#] { assert!(read_LmlPreservation_TypedEnum_json(wire).is_err()); }
 }
+
+#[test] fn generated_rust_literals_preserve_control_text() {
+ let control_text="\0\u{8}\u{c}\u{2028}";
+ let mut model=read_ControlText_json("{}").unwrap();
+ model.apply_defaults().unwrap();
+ assert!(matches!(&model.default_value,Presence::Value(value) if value==control_text));
+ let wire=serde_json::to_string(&serde_json::Map::from_iter([
+  (control_text.into(),serde_json::json!("alias value")),
+  ("enum_value".into(),serde_json::json!(control_text)),
+  ("default_value".into(),serde_json::json!(control_text)),
+ ])).unwrap();
+ let model=read_ControlText_json(&wire).unwrap();
+ assert!(matches!(&model.aliased,Presence::Value(value) if value=="alias value"));
+ assert!(matches!(&model.enum_value,Presence::Value(ControlText_enum_value_Enum::Case0)));
+ assert!(matches!(&model.default_value,Presence::Value(value) if value==control_text));
+ let encoded=write_ControlText_json(&model).unwrap();
+ let value:serde_json::Value=serde_json::from_str(&encoded).unwrap();
+ assert_eq!(value[control_text],"alias value");
+ assert_eq!(value["enum_value"],control_text);
+ assert_eq!(value["default_value"],control_text);
+}
 }

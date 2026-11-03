@@ -493,6 +493,28 @@ fn emitted_consumer_compiles_and_executes_json_behavior() {
         model("BigEnum", vec![integer], vec![keep("number", &["number"])]),
     );
 
+    let control_text = "\0\u{8}\u{c}\u{2028}";
+    let mut enum_value = attribute("enum_value", BuiltinType::String);
+    enum_value.enumeration = Some(vec![NeutralValue::String(control_text.into())]);
+    let mut default_value = attribute("default_value", BuiltinType::String);
+    default_value.default = DefaultValue::Present(NeutralValue::String(control_text.into()));
+    b.models.insert(
+        "ControlText@default".into(),
+        model(
+            "ControlText",
+            vec![
+                enum_value,
+                default_value,
+                attribute("aliased", BuiltinType::String),
+            ],
+            vec![
+                keep("enum_value", &["enum_value"]),
+                keep("default_value", &["default_value"]),
+                keep("aliased", &[control_text]),
+            ],
+        ),
+    );
+
     let models = generator::RustEmitter
         .generate_models(&b, &TypeBindings::new())
         .unwrap();
@@ -546,7 +568,7 @@ num-traits="=0.2.19"
         String::from_utf8_lossy(&result.stderr)
     );
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("9 passed"), "{stdout}");
+    assert!(stdout.contains("10 passed"), "{stdout}");
 }
 
 #[test]
