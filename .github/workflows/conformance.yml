@@ -60,6 +60,44 @@ jobs:
                   subprocess.run(command, check=True)
           PY
 
+  native-xml:
+    name: Native XML codecs over moxml-rs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    # The pinned moxml-rs revision needs a newer compiler than the 1.85.0 baseline,
+    # so the `xml` feature is exercised on its own toolchain.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install stable Rust with lint components
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import fcntl, subprocess
+          with open('/tmp/lutaml-1033-memory.lock', 'w') as lock:
+              fcntl.flock(lock, fcntl.LOCK_EX)
+              subprocess.run(['rustup', 'toolchain', 'install', 'stable', '--profile', 'minimal', '--component', 'clippy'], check=True)
+          PY
+      - name: Locked XML codec conformance against the Ruby oracle
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import fcntl, subprocess
+          with open('/tmp/lutaml-1033-memory.lock', 'w') as lock:
+              fcntl.flock(lock, fcntl.LOCK_EX)
+              commands = [
+                  ['cargo', 'fetch', '--locked'],
+                  ['cargo', 'clippy', '--locked', '--all-targets', '--features', 'xml', '--', '-D', 'warnings', '-A', 'clippy::derivable_impls'],
+                  ['cargo', 'test', '--locked', '--features', 'xml', '--test', 'xml_runtime', '--', '--nocapture'],
+              ]
+              for command in commands:
+                  print('$', ' '.join(command), flush=True)
+                  subprocess.run(command, check=True)
+          PY
+
   wasm-json:
     name: Generated JSON wasm in Node and Chrome
     runs-on: ubuntu-22.04

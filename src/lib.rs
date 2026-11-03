@@ -14,3 +14,4 @@ pub mod generator;
 #[cfg(feature = "generator")]
 pub mod lml;
 pub mod values;
+pub mod xml;

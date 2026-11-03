@@ -22,8 +22,8 @@ generator = ["dep:serde_yaml", "dep:sha2", "dep:unsafe-libyaml"]
 # Generated consumers need only the shared data and exact-number contracts.
 runtime = []
 wasm = ["runtime", "dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
-# Reserved integration slot: no upstream XML API is assumed by this crate.
-xml = ["runtime"]
+# Native XML codecs over the pinned moxml-rs document faces.
+xml = ["runtime", "dep:moxml"]
 
 [dependencies]
 serde = { version = "=1.0.219", features = ["derive"] }
@@ -36,3 +36,4 @@ sha2 = { version = "=0.10.8", optional = true }
 wasm-bindgen = { version = "=0.2.100", optional = true }
 serde-wasm-bindgen = { version = "=0.6.5", optional = true }
 unsafe-libyaml = { version = "=0.2.11", optional = true }
+moxml = { git = "https://github.com/lutaml/moxml-rs", rev = "29d98f144c58f68557ce4dd12a7e9cd4343a3955", optional = true }
