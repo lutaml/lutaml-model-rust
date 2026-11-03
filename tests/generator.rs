@@ -1,6 +1,9 @@
 mod contracts {
     pub use lutaml_model::contracts::*;
 }
+mod values {
+    pub use lutaml_model::values::*;
+}
 #[path = "../src/generator/mod.rs"]
 mod generator;
 use contracts::*;
@@ -185,6 +188,27 @@ fn invalid_defaults_bounds_and_unsupported_types_refuse() {
             .reason,
         ErrorReason::InvalidDocument
     );
+    let mut b = bundle();
+    {
+        let a = &mut b.models.get_mut("Leaf@default").unwrap().attributes[0];
+        a.value_type = TypeRef::Builtin {
+            name: BuiltinType::Float,
+        };
+        a.default = DefaultValue::Present(NeutralValue::String("1.0e-05".into()));
+    }
+    assert_eq!(
+        RustEmitter
+            .generate_models(&b, &TypeBindings::new())
+            .unwrap_err()
+            .reason,
+        ErrorReason::NonSerializableDefault
+    );
+    b.models.get_mut("Leaf@default").unwrap().attributes[0].default =
+        DefaultValue::Present(NeutralValue::String("1.0e-5".into()));
+    let models = RustEmitter
+        .generate_models(&b, &TypeBindings::new())
+        .unwrap();
+    assert!(models["models.rs"].contains("PortableFloat>"));
     let mut b = bundle();
     b.models.get_mut("Leaf@default").unwrap().attributes[0].value_type = TypeRef::Builtin {
         name: BuiltinType::Hash,

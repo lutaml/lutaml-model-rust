@@ -1,3 +1,6 @@
+mod values {
+    pub use lutaml_model::values::*;
+}
 #[path = "../src/lml/mod.rs"]
 mod lml;
 use lml::*;
@@ -257,11 +260,40 @@ fn graph_identity_register_context_and_discriminator_targets_are_checked() {
 #[test]
 fn rejects_unknown_features_and_preserves_declared_enum_alias_order() {
     let mut v = bundle();
-    v["models"]["Example::Node@custom"]["attributes"][0]["type"]["name"] = json!("float");
+    v["models"]["Example::Node@custom"]["attributes"][0]["type"]["name"] = json!("double");
     refused(
         &v,
         ErrorReason::UnsupportedType,
         "/models/Example::Node@custom/attributes/0/type/name",
+    );
+    v = bundle();
+    v["models"]["Example::Node@custom"]["attributes"][0]["type"]["name"] = json!("float");
+    for good in ["0.71", "1.0e-5", "-0.0", "1.0e20", "9.999999999999998e15"] {
+        v["models"]["Example::Node@custom"]["attributes"][0]["default"]["value"] = json!(good);
+        parsed(&v);
+    }
+    for bad in [
+        json!("1.0e-05"),
+        json!("+0.71"),
+        json!(".71"),
+        json!("1e-5"),
+        json!("NaN"),
+        json!("Infinity"),
+        json!(1),
+    ] {
+        v["models"]["Example::Node@custom"]["attributes"][0]["default"]["value"] = bad;
+        refused(
+            &v,
+            ErrorReason::NonSerializableDefault,
+            "/models/Example::Node@custom/attributes/0/default/value",
+        );
+    }
+    // JSON-number defaults are refused before type checking.
+    v["models"]["Example::Node@custom"]["attributes"][0]["default"]["value"] = json!(0.71);
+    refused(
+        &v,
+        ErrorReason::InvalidDocument,
+        "/models/Example::Node@custom/attributes/0/default/value",
     );
     v = bundle();
     v["capabilities"] = json!([]);

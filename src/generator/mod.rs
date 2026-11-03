@@ -67,6 +67,7 @@ pub fn model_names(bundle: &Bundle) -> ContractResult<BTreeMap<String, String>> 
         "QName",
         "ExactInteger",
         "ExactDecimal",
+        "PortableFloat",
         "Serialize",
         "Deserialize",
         "String",
@@ -119,6 +120,7 @@ fn builtin(t: &BuiltinType, id: &str, field: &str) -> ContractResult<String> {
         BuiltinType::Boolean => "bool",
         BuiltinType::Integer => "ExactInteger",
         BuiltinType::Decimal | BuiltinType::Rational => "ExactDecimal",
+        BuiltinType::Float => "PortableFloat",
         BuiltinType::Qname => "QName",
         // Lexical formats require a declared validator/binding rather than an
         // unchecked String or a platform-dependent date/URI interpretation.
@@ -600,6 +602,12 @@ fn validate_literal(
                     .iter()
                     .all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
         }
+        (
+            TypeRef::Builtin {
+                name: BuiltinType::Float,
+            },
+            NeutralValue::String(s),
+        ) => crate::values::canonical_float(s),
         _ => false,
     };
     if valid {

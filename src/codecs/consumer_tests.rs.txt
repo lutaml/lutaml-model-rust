@@ -12,6 +12,25 @@ use serde_json::json;
  let wire=r#"{"amount":"123456789012345678901234567890.00100","count":"9007199254740993123456789"}"#;let model=read_Record_json(wire).unwrap();assert_eq!(serde_json::from_str::<serde_json::Value>(&write_Record_json(&model).unwrap()).unwrap(),serde_json::from_str::<serde_json::Value>(wire).unwrap());
  assert!(read_Record_json(r#"{"count":9007199254740993}"#).is_err());assert!(read_Record_json(r#"{"amount":0.1}"#).is_err());assert!(read_Record_json(r#"{"amount":"1e100"}"#).is_err());
 }
+#[test] fn portable_float_vectors_round_trip_byte_for_byte_and_refuse_noncanonical() {
+ let v:serde_json::Value=serde_json::from_str(include_str!("float_wire_vectors.json")).unwrap();
+ let encode=v["encode"].as_array().unwrap();assert_eq!(encode.len(),37);
+ for e in encode {
+  let bits=u64::from_str_radix(e["bits"].as_str().unwrap(),16).unwrap();let wire=e["wire"].as_str().unwrap();
+  let input=format!("{{\"value\":{}}}",serde_json::to_string(wire).unwrap());
+  let model=read_Measure_json(&input).unwrap();
+  match &model.value { Presence::Value(f)=>{assert_eq!(f.get().to_bits(),bits,"{wire}");assert_eq!(super::values::PortableFloat::new(f64::from_bits(bits)).unwrap().to_wire(),wire);} _=>panic!("{wire}") }
+  assert_eq!(write_Measure_json(&model).unwrap(),input,"{wire}");
+ }
+ let verdicts=v["canonical"].as_array().unwrap();assert_eq!(verdicts.len(),21);
+ for c in verdicts {
+  let text=c["text"].as_str().unwrap();let input=format!("{{\"value\":{}}}",serde_json::to_string(text).unwrap());
+  assert_eq!(read_Measure_json(&input).is_ok(),c["canonical"].as_bool().unwrap(),"{text:?}");
+  assert_eq!(super::values::PortableFloat::parse(text).is_ok(),c["canonical"].as_bool().unwrap(),"{text:?}");
+ }
+ assert!(read_Measure_json(r#"{"value":0.71}"#).is_err());assert!(read_Measure_json(r#"{"value":1}"#).is_err());
+ let mut defaulted=read_Measure_json("{}").unwrap();defaulted.apply_defaults().unwrap();assert_eq!(write_Measure_json(&defaulted).unwrap(),r#"{"ratio":"0.71"}"#);
+}
 #[test] fn nested_models_and_discriminators_use_wire_aliases() {
  let model=read_Record_json(r#"{"child":{"old_name":"nested"},"selected":{"kind":"item","wire_name":"selected"}}"#).unwrap();let output=serde_json::from_str::<serde_json::Value>(&write_Record_json(&model).unwrap()).unwrap();assert_eq!(output,json!({"child":{"wire_name":"nested"},"selected":{"kind":"item","wire_name":"selected"}}));
  let err=read_Record_json(r#"{"selected":{"kind":"unknown"}}"#).unwrap_err();assert_eq!(err.reason,super::contracts::ErrorReason::UnknownDiscriminator);

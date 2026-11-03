@@ -13,6 +13,7 @@ const BUILTINS: &[&str] = &[
     "integer",
     "decimal",
     "rational",
+    "float",
     "date",
     "time",
     "date_time",

@@ -125,6 +125,7 @@ pub enum BuiltinType {
     Integer,
     Decimal,
     Rational,
+    Float,
     Date,
     Time,
     DateTime,

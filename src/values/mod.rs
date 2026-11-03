@@ -125,6 +125,125 @@ impl<'de> Deserialize<'de> for ExactDecimal {
     }
 }
 
+/// Portable `float` wire text: Ruby's shortest round-trip digits with one
+/// exponent spelling (lowercase `e`, no `+`, no leading zeros, always a
+/// fraction digit). Fixed notation when -4 < decimal-point position <= 15.
+/// `{:e}` yields the shortest round-trip digits; only the layout is ours.
+/// The finite check is a precondition: callers refuse NaN/Infinity first.
+pub fn float_wire(value: f64) -> String {
+    if value == 0.0 {
+        return if value.is_sign_negative() {
+            "-0.0"
+        } else {
+            "0.0"
+        }
+        .into();
+    }
+    let sci = format!("{:e}", value.abs());
+    let (mantissa, exponent) = sci
+        .split_once('e')
+        .expect("LowerExp always has an exponent");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let decpt = exponent
+        .parse::<i32>()
+        .expect("LowerExp exponent is an integer")
+        + 1;
+    let sign = if value < 0.0 { "-" } else { "" };
+    if decpt > -4 && decpt <= 15 {
+        if decpt <= 0 {
+            format!(
+                "{sign}0.{}{digits}",
+                "0".repeat(decpt.unsigned_abs() as usize)
+            )
+        } else if decpt as usize >= digits.len() {
+            format!(
+                "{sign}{digits}{}.0",
+                "0".repeat(decpt as usize - digits.len())
+            )
+        } else {
+            let split = decpt as usize;
+            format!("{sign}{}.{}", &digits[..split], &digits[split..])
+        }
+    } else {
+        let fraction = if digits.len() > 1 { &digits[1..] } else { "0" };
+        format!("{sign}{}.{fraction}e{}", &digits[..1], decpt - 1)
+    }
+}
+
+fn float_shape(text: &str) -> bool {
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let (number, exponent) = match unsigned.split_once('e') {
+        Some((number, exponent)) => (number, Some(exponent)),
+        None => (unsigned, None),
+    };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    let Some((whole, fraction)) = number.split_once('.') else {
+        return false;
+    };
+    digits(whole)
+        && digits(fraction)
+        && exponent.is_none_or(|e| digits(e.strip_prefix('-').unwrap_or(e)))
+}
+
+/// Read a canonical float string: the shape matches, the value is finite and
+/// re-rendering it reproduces the input byte for byte.
+pub fn parse_float_wire(text: &str) -> ContractResult<f64> {
+    if !float_shape(text) {
+        return Err(failure(
+            ErrorReason::InvalidDocument,
+            "expected a canonical float string",
+        ));
+    }
+    match text.parse::<f64>() {
+        Ok(value) if value.is_finite() && float_wire(value) == text => Ok(value),
+        _ => Err(failure(
+            ErrorReason::InvalidDocument,
+            "float string is not in canonical form",
+        )),
+    }
+}
+
+pub fn canonical_float(text: &str) -> bool {
+    parse_float_wire(text).is_ok()
+}
+
+/// IEEE-754 binary64 with a string-only serde boundary (JSON numbers refused).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PortableFloat(f64);
+impl Eq for PortableFloat {}
+impl PortableFloat {
+    pub fn new(value: f64) -> ContractResult<Self> {
+        if value.is_finite() {
+            Ok(Self(value))
+        } else {
+            Err(failure(
+                ErrorReason::NonSerializableDefault,
+                "a non-finite float has no wire form",
+            ))
+        }
+    }
+    pub fn parse(input: &str) -> ContractResult<Self> {
+        parse_float_wire(input).map(Self)
+    }
+    pub fn get(&self) -> f64 {
+        self.0
+    }
+    pub fn to_wire(self) -> String {
+        float_wire(self.0)
+    }
+}
+impl Serialize for PortableFloat {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_wire())
+    }
+}
+impl<'de> Deserialize<'de> for PortableFloat {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Arbitrary-size integer with a string-only serde boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExactInteger {

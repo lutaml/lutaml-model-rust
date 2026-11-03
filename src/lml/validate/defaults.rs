@@ -2,11 +2,11 @@ use super::*;
 
 pub(super) fn builtin(n: &Node, at: &str) -> ContractResult<()> {
     let name = string(n, at)?;
-    if ["float", "double"].contains(&name) {
+    if name == "double" {
         return Err(failure(
             ErrorReason::UnsupportedType,
             at,
-            "no lossless floating type contract",
+            "double is not a portable type; declare float",
         ));
     }
     if !BUILTINS.contains(&name) {
@@ -175,6 +175,7 @@ pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<
             "boolean" => matches!(value, Node::Bool(_)),
             "integer" => value.string().is_some_and(|s| exact(s, false)),
             "decimal" | "rational" => value.string().is_some_and(|s| exact(s, true)),
+            "float" => value.string().is_some_and(crate::values::canonical_float),
             "hash" => matches!(value, Node::Object(_)),
             "qname" => {
                 value.object().is_some()

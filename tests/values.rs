@@ -166,3 +166,49 @@ fn shared_ruby_exact_value_vectors_match_without_rounding() {
         }
     }
 }
+
+#[test]
+fn portable_float_matches_ruby_vectors_and_spelling_verdicts() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/float_wire_vectors.json")).unwrap();
+    let encode = vectors["encode"].as_array().unwrap();
+    assert_eq!(encode.len(), 37);
+    for vector in encode {
+        let bits = u64::from_str_radix(vector["bits"].as_str().unwrap(), 16).unwrap();
+        let wire = vector["wire"].as_str().unwrap();
+        assert_eq!(values::float_wire(f64::from_bits(bits)), wire);
+        let parsed = values::PortableFloat::parse(wire).unwrap();
+        assert_eq!(parsed.get().to_bits(), bits, "{wire}");
+        assert_eq!(
+            serde_json::to_string(&parsed).unwrap(),
+            serde_json::to_string(wire).unwrap()
+        );
+    }
+    let verdicts = vectors["canonical"].as_array().unwrap();
+    assert_eq!(verdicts.len(), 21);
+    for verdict in verdicts {
+        let text = verdict["text"].as_str().unwrap();
+        let expected = verdict["canonical"].as_bool().unwrap();
+        assert_eq!(values::canonical_float(text), expected, "{text:?}");
+        assert_eq!(
+            serde_json::from_str::<values::PortableFloat>(&serde_json::to_string(text).unwrap())
+                .is_ok(),
+            expected,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn portable_float_refuses_json_numbers_and_non_finite_values() {
+    assert!(serde_json::from_str::<values::PortableFloat>("0.71").is_err());
+    assert!(serde_json::from_str::<values::PortableFloat>("1").is_err());
+    assert!(values::PortableFloat::new(f64::NAN).is_err());
+    assert!(values::PortableFloat::new(f64::INFINITY).is_err());
+    assert!(values::PortableFloat::new(f64::NEG_INFINITY).is_err());
+    // Exponent thresholds: fixed for -4 < decimal point <= 15.
+    assert_eq!(values::float_wire(1e-4), "0.0001");
+    assert_eq!(values::float_wire(1e-5), "1.0e-5");
+    assert_eq!(values::float_wire(9.99e14), "999000000000000.0");
+    assert_eq!(values::float_wire(1e15), "1.0e15");
+}

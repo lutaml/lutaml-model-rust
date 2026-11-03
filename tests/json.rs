@@ -1,6 +1,9 @@
 mod contracts {
     pub use lutaml_model::contracts::*;
 }
+mod values {
+    pub use lutaml_model::values::*;
+}
 #[path = "../src/codecs/mod.rs"]
 mod codecs;
 #[path = "../src/generator/mod.rs"]
@@ -493,6 +496,17 @@ fn emitted_consumer_compiles_and_executes_json_behavior() {
         model("BigEnum", vec![integer], vec![keep("number", &["number"])]),
     );
 
+    let mut ratio = attribute("ratio", BuiltinType::Float);
+    ratio.default = DefaultValue::Present(NeutralValue::String("0.71".into()));
+    b.models.insert(
+        "Measure@default".into(),
+        model(
+            "Measure",
+            vec![attribute("value", BuiltinType::Float), ratio],
+            vec![keep("value", &["value"]), keep("ratio", &["ratio"])],
+        ),
+    );
+
     let control_text = "\0\u{8}\u{c}\u{2028}";
     let mut enum_value = attribute("enum_value", BuiltinType::String);
     enum_value.enumeration = Some(vec![NeutralValue::String(control_text.into())]);
@@ -522,6 +536,11 @@ fn emitted_consumer_compiles_and_executes_json_behavior() {
         .generate_json_codecs(&b, &TypeBindings::new())
         .unwrap();
     std::fs::write(dir.join("src/oracle-cases.json"),serde_json::to_vec(&serde_json::json!({"profile":PORTABLE_PROFILE,"expected_case_ids":["core-json-portable-exact"],"cases":oracle_cases})).unwrap()).unwrap();
+    std::fs::write(
+        dir.join("src/float_wire_vectors.json"),
+        include_str!("fixtures/float_wire_vectors.json"),
+    )
+    .unwrap();
     std::fs::write(dir.join("src/models.rs"), &models["models.rs"]).unwrap();
     std::fs::write(dir.join("src/json_codecs.rs"), &json["json_codecs.rs"]).unwrap();
     std::fs::write(
@@ -568,7 +587,7 @@ num-traits="=0.2.19"
         String::from_utf8_lossy(&result.stderr)
     );
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("10 passed"), "{stdout}");
+    assert!(stdout.contains("11 passed"), "{stdout}");
 }
 
 #[test]

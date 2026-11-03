@@ -247,6 +247,7 @@ fn transformed(
         let exact = match name {
             BuiltinType::Integer => Some("ExactInteger"),
             BuiltinType::Decimal | BuiltinType::Rational => Some("ExactDecimal"),
+            BuiltinType::Float => Some("PortableFloat"),
             _ => None,
         };
         if let Some(exact) = exact {
@@ -267,7 +268,10 @@ fn member(
         || matches!(
             a.value_type,
             TypeRef::Builtin {
-                name: BuiltinType::Integer | BuiltinType::Decimal | BuiltinType::Rational
+                name: BuiltinType::Integer
+                    | BuiltinType::Decimal
+                    | BuiltinType::Rational
+                    | BuiltinType::Float
             }
         );
     if !needs_transform {

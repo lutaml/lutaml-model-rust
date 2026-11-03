@@ -32,6 +32,32 @@ impl ExactDecimal {
  pub fn as_str(&self)->&str { &self.0 }
 }
 impl<'de> Deserialize<'de> for ExactDecimal { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PortableFloat(f64);
+impl Eq for PortableFloat {}
+impl PortableFloat {
+ pub fn new(v: f64) -> Result<Self, &'static str> { if v.is_finite() { Ok(Self(v)) } else { Err("non-finite float") } }
+ pub fn get(&self)->f64 { self.0 }
+ pub fn to_wire(self)->String {
+  let x=self.0; if x==0.0 { return if x.is_sign_negative() {"-0.0".into()} else {"0.0".into()}; }
+  let sci=format!("{:e}",x.abs()); let (m,e)=sci.split_once('e').unwrap(); let digits:String=m.chars().filter(|c|*c!='.').collect();
+  let decpt=e.parse::<i32>().unwrap()+1; let sign=if x<0.0 {"-"} else {""};
+  if decpt>-4 && decpt<=15 {
+   if decpt<=0 { format!("{sign}0.{}{digits}","0".repeat(decpt.unsigned_abs() as usize)) }
+   else if decpt as usize>=digits.len() { format!("{sign}{digits}{}.0","0".repeat(decpt as usize-digits.len())) }
+   else { format!("{sign}{}.{}",&digits[..decpt as usize],&digits[decpt as usize..]) }
+  } else { let f=if digits.len()>1 {&digits[1..]} else {"0"}; format!("{sign}{}.{f}e{}",&digits[..1],decpt-1) }
+ }
+ pub fn parse(s: &str) -> Result<Self, &'static str> {
+  let u=s.strip_prefix('-').unwrap_or(s); let (n,x)=match u.split_once('e') { Some((n,x))=>(n,Some(x)), None=>(u,None) };
+  let d=|p:&str| !p.is_empty() && p.bytes().all(|c|c.is_ascii_digit());
+  let ok=match n.split_once('.') { Some((w,f))=>d(w)&&d(f), None=>false } && x.is_none_or(|x|d(x.strip_prefix('-').unwrap_or(x)));
+  if !ok { return Err("invalid float"); }
+  match s.parse::<f64>() { Ok(v) if v.is_finite() => { let r=Self(v); if r.to_wire()==s { Ok(r) } else { Err("float is not canonical") } } _ => Err("invalid float") }
+ }
+}
+impl Serialize for PortableFloat { fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{ s.serialize_str(&self.to_wire()) } }
+impl<'de> Deserialize<'de> for PortableFloat { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum TextSource { Member { attribute: String, index: u64 }, Literal { literal: String } }
