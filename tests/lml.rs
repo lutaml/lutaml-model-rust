@@ -1020,6 +1020,58 @@ fn toml_mapping_validates_and_the_typed_view_refuses_it_by_name() {
     );
 }
 
+/// 02g: the `any_attribute` XML rule is accepted exactly where Ruby accepts it
+/// (parity rows `v2_any_attr_*`), and the typed view refuses it by name.
+#[test]
+fn any_attribute_rule_is_validated_like_ruby_and_refused_by_the_typed_view() {
+    let rule = json!({"kind":"any_attribute","to":"other"});
+    let mut v = bundle();
+    v["capabilities"] = json!(["json", "xml"]);
+    let model = &mut v["models"]["Example::Node@custom"];
+    model["attributes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"other","type":{"kind":"builtin","name":"hash"}}));
+    model["mappings"]["xml"] = json!({"rules":[rule]});
+    let at = "/models/Example::Node@custom/mappings/xml/rules";
+    let error = parsed(&v).bundle().unwrap_err();
+    assert_eq!(error.reason, ErrorReason::UnsupportedMapping);
+    assert_eq!(error.location, format!("{at}/0"));
+    assert_eq!(error.format.as_deref(), Some("xml"));
+    assert!(format!("{error:?}").contains("any_attribute"), "{error:?}");
+    let rules =
+        |v: &mut Value| v["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"].take();
+    let mut w = v.clone();
+    w["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"] = json!([rule, rule]);
+    refused(&w, ErrorReason::UnsupportedMapping, &format!("{at}/1"));
+    let mut w = v.clone();
+    w["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"][0]["to"] = json!("amount");
+    refused(&w, ErrorReason::UnsupportedMapping, &format!("{at}/0/to"));
+    let mut w = v.clone();
+    w["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"][0]["name"] = json!(["x"]);
+    refused(&w, ErrorReason::UnsupportedMapping, &format!("{at}/0/name"));
+    let mut w = v.clone();
+    w["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"][0]["to"] = json!("missing");
+    refused(&w, ErrorReason::DanglingReference, &format!("{at}/0/to"));
+    let mut w = v.clone();
+    let moved = rules(&mut w);
+    w["models"]["Example::Node@custom"]["mappings"]["json"] = json!({"rules":moved});
+    refused(
+        &w,
+        ErrorReason::UnsupportedMapping,
+        "/models/Example::Node@custom/mappings/json/rules/0",
+    );
+    let mut w = v.clone();
+    let moved = rules(&mut w);
+    w["models"]["Example::Node@custom"]["mappings"]["xml"] =
+        json!({"sequence":[{"kind":"sequence","members":moved}]});
+    refused(
+        &w,
+        ErrorReason::UnsupportedMapping,
+        "/models/Example::Node@custom/mappings/xml/sequence/0/members/0/kind",
+    );
+}
+
 /// Ruby review-R2 rules (attribute names, reserved members, nesting depth,
 /// mapping scalars, duplicate keys): 97 Ruby-generated cases with the expected
 /// reason and, where Ruby reports one, location (bundle text errors have none).

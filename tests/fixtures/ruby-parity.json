@@ -7566,5 +7566,1213 @@
   "ruby": "OK",
   "ruby_checksum": "sha256:e20448ed120a8892178c2b482fa151874152d60e9e1472ed72aa17ea670f63ba",
   "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_valid",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "attribute",
+       "name": [
+        "id"
+       ],
+       "to": "id"
+      },
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:1c3be03dca191a79901751e797135c1ab7acbac973035e4d1cae748d9ca4e58f",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_alone",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:ec20defe4c8e01ea3d60669c0e83d0f531a6376279030d596f3debc8231e0778",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_not_last",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      },
+      {
+       "kind": "attribute",
+       "name": [
+        "id"
+       ],
+       "to": "id"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:0018c98840cd791e7cd37890c419a1807100b3efd1e63da83c79d9b880e9ede6",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_two",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      },
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_extra_key_name",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other",
+       "name": [
+        "x"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_extra_key_namespace",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other",
+       "namespace": {
+        "mode": "inherit"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_extra_key_unknown",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other",
+       "zzz": 1
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_to_missing",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR invalid_document",
+  "rust": "ERR invalid_document"
+ },
+ {
+  "name": "v2_any_attr_to_undeclared",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "nope"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR dangling_reference",
+  "rust": "ERR dangling_reference"
+ },
+ {
+  "name": "v2_any_attr_to_non_string",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": 5
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR invalid_document",
+  "rust": "ERR invalid_document"
+ },
+ {
+  "name": "v2_any_attr_to_empty",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": ""
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR invalid_document",
+  "rust": "ERR invalid_document"
+ },
+ {
+  "name": "v2_any_attr_to_string_attr",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "id"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_to_collection_true",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     },
+     "collection": true
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR invalid_document",
+  "rust": "ERR invalid_document"
+ },
+ {
+  "name": "v2_any_attr_to_collection_bounds_class",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     },
+     "collection": {
+      "min": 1,
+      "max": null,
+      "class": "Array"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_to_collection_false",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     },
+     "collection": false
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:55b4a8189c0c85f628f388f1bfdfa21516180bc30e1d1176233a61de5b4161f5",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_to_collection_bounds",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     },
+     "collection": {
+      "min": 0,
+      "max": null
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_to_custom_type",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "other",
+     "type": {
+      "kind": "model",
+      "id": "Foo@default"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_json_mapping",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "json": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_yaml_mapping",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "yaml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_toml_mapping",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "toml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_in_sequence_member",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [],
+     "sequence": [
+      {
+       "kind": "sequence",
+       "members": [
+        {
+         "kind": "any_attribute",
+         "to": "other"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_in_choice_member",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [],
+     "sequence": [
+      {
+       "kind": "choice",
+       "members": [
+        {
+         "kind": "element",
+         "name": [
+          "id"
+         ],
+         "to": "id"
+        },
+        {
+         "kind": "any_attribute",
+         "to": "other"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_as_sequence_group",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [],
+     "sequence": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_rules_nested_in_rule",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "element",
+       "name": [
+        "id"
+       ],
+       "to": "id",
+       "members": [
+        {
+         "kind": "any_attribute",
+         "to": "other"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:2164746b2bee7ba8279133a5eb55109adebe873227df0a0ba52799f31f783739",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_kind_case",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "Any_Attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
+ },
+ {
+  "name": "v2_any_attr_with_ordered_and_root",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "root": {
+      "element": "n"
+     },
+     "ordered": true,
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:795547f6c2ca8dcc6f0a84af65243c9df356e807087703cc88fbc85fdda09761",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_hash_alias_name",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "Hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "other"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "ERR unknown_type",
+  "rust": "ERR unknown_type"
+ },
+ {
+  "name": "v2_any_attr_two_attrs_one_hash",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "a",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "b",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": [
+      {
+       "kind": "any_attribute",
+       "to": "b"
+      }
+     ]
+    }
+   }
+  },
+  "ruby": "OK",
+  "ruby_checksum": "sha256:1d00086df7b7a40c431de28f6d1a27f2808e5d3e96cd09fd3346cda8771bf660",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_rules_not_array",
+  "kind": "document",
+  "doc": {
+   "lml": 2,
+   "model": "Foo",
+   "register": "default",
+   "attributes": [
+    {
+     "name": "id",
+     "type": {
+      "kind": "builtin",
+      "name": "string"
+     }
+    },
+    {
+     "name": "other",
+     "type": {
+      "kind": "builtin",
+      "name": "hash"
+     }
+    }
+   ],
+   "mappings": {
+    "xml": {
+     "rules": {
+      "kind": "any_attribute",
+      "to": "other"
+     }
+    }
+   }
+  },
+  "ruby": "ERR invalid_document",
+  "rust": "ERR invalid_document"
+ },
+ {
+  "name": "v2_any_attr_bundle_valid",
+  "kind": "bundle",
+  "doc": {
+   "lml_bundle": 1,
+   "roots": [
+    "Foo@default"
+   ],
+   "models": {
+    "Foo@default": {
+     "lml": 2,
+     "model": "Foo",
+     "register": "default",
+     "attributes": [
+      {
+       "name": "id",
+       "type": {
+        "kind": "builtin",
+        "name": "string"
+       }
+      },
+      {
+       "name": "other",
+       "type": {
+        "kind": "builtin",
+        "name": "hash"
+       }
+      }
+     ],
+     "mappings": {
+      "xml": {
+       "rules": [
+        {
+         "kind": "any_attribute",
+         "to": "other"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "value_types": {},
+   "capabilities": [
+    "json",
+    "xml"
+   ]
+  },
+  "ruby": "OK",
+  "rust": "OK"
+ },
+ {
+  "name": "v2_any_attr_bundle_two",
+  "kind": "bundle",
+  "doc": {
+   "lml_bundle": 1,
+   "roots": [
+    "Foo@default"
+   ],
+   "models": {
+    "Foo@default": {
+     "lml": 2,
+     "model": "Foo",
+     "register": "default",
+     "attributes": [
+      {
+       "name": "id",
+       "type": {
+        "kind": "builtin",
+        "name": "string"
+       }
+      },
+      {
+       "name": "other",
+       "type": {
+        "kind": "builtin",
+        "name": "hash"
+       }
+      }
+     ],
+     "mappings": {
+      "xml": {
+       "rules": [
+        {
+         "kind": "any_attribute",
+         "to": "other"
+        },
+        {
+         "kind": "any_attribute",
+         "to": "other"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "value_types": {},
+   "capabilities": [
+    "json",
+    "xml"
+   ]
+  },
+  "ruby": "ERR unsupported_mapping",
+  "rust": "ERR unsupported_mapping"
  }
 ]

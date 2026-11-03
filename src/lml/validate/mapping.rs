@@ -110,6 +110,13 @@ fn compositor(n: &Node, names: &BTreeSet<&str>, at: &str, xml: bool) -> Contract
     {
         let loc = format!("{at}/members/{i}");
         object(member, &loc)?;
+        if member.get("kind").and_then(Node::string) == Some("any_attribute") {
+            return Err(failure(
+                ErrorReason::UnsupportedMapping,
+                &pointer(&loc, "kind"),
+                "any_attribute is not allowed inside a compositor",
+            ));
+        }
         if matches!(
             member.get("kind").and_then(Node::string),
             Some("sequence" | "choice")
@@ -145,8 +152,15 @@ fn rule(n: &Node, names: &BTreeSet<&str>, at: &str, xml: bool) -> ContractResult
     )?;
     if xml {
         if let Some(kind) = n.get("kind") {
-            if !["attribute", "element", "content", "sequence", "choice"]
-                .contains(&string(kind, &pointer(at, "kind"))?)
+            if ![
+                "attribute",
+                "element",
+                "content",
+                "any_attribute",
+                "sequence",
+                "choice",
+            ]
+            .contains(&string(kind, &pointer(at, "kind"))?)
             {
                 return Err(failure(
                     ErrorReason::UnsupportedMapping,
@@ -195,7 +209,12 @@ fn rule(n: &Node, names: &BTreeSet<&str>, at: &str, xml: bool) -> ContractResult
     }
     Ok(())
 }
-pub(super) fn xml(n: &Node, names: &BTreeSet<&str>, at: &str) -> ContractResult<()> {
+pub(super) fn xml(
+    n: &Node,
+    names: &BTreeSet<&str>,
+    hashes: &BTreeSet<&str>,
+    at: &str,
+) -> ContractResult<()> {
     mapping_keys(
         n,
         &[
@@ -225,6 +244,9 @@ pub(super) fn xml(n: &Node, names: &BTreeSet<&str>, at: &str) -> ContractResult<
                 e
             })?;
         }
+    }
+    if let Some(rules) = n.get("rules") {
+        any_attribute_rules(rules.array().unwrap_or(&[]), hashes, at, true)?;
     }
     // Ruby's only compositor shape: an array of sequence/choice groups whose
     // members are rule objects or nested groups (no `choice` key, no bare
@@ -281,6 +303,52 @@ pub(super) fn key_mapping(n: &Node, names: &BTreeSet<&str>, at: &str) -> Contrac
                 e
             })?;
         }
+        any_attribute_rules(rules.array().unwrap_or(&[]), &BTreeSet::new(), at, false)?;
+    }
+    Ok(())
+}
+/// `any_attribute` (Ruby `map_all_attributes`): xml only, top level only, at
+/// most one per mapping, exactly `kind` and `to`, `to` a declared
+/// non-collection builtin `hash` attribute (mirrors Ruby `any_attribute_rules`).
+fn any_attribute_rules(
+    rules: &[Node],
+    hashes: &BTreeSet<&str>,
+    at: &str,
+    xml: bool,
+) -> ContractResult<()> {
+    let found: Vec<usize> = rules
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.get("kind").and_then(Node::string) == Some("any_attribute"))
+        .map(|(i, _)| i)
+        .collect();
+    let Some(&first) = found.first() else {
+        return Ok(());
+    };
+    let rule_at = |i: usize| format!("{at}/rules/{i}");
+    if !xml {
+        return Err(failure(
+            ErrorReason::UnsupportedMapping,
+            &rule_at(first),
+            "any_attribute is xml only",
+        ));
+    }
+    if let Some(&second) = found.get(1) {
+        return Err(failure(
+            ErrorReason::UnsupportedMapping,
+            &rule_at(second),
+            "at most one any_attribute rule per mapping",
+        ));
+    }
+    let loc = rule_at(first);
+    mapping_keys(&rules[first], &["kind", "to"], &loc)?;
+    let to = string(field(&rules[first], "to", &loc)?, &pointer(&loc, "to"))?;
+    if !hashes.contains(to) {
+        return Err(failure(
+            ErrorReason::UnsupportedMapping,
+            &pointer(&loc, "to"),
+            "any_attribute `to` must be a non-collection hash attribute",
+        ));
     }
     Ok(())
 }
