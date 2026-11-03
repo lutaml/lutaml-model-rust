@@ -27,3 +27,11 @@ retain their stable names. Constructors apply defaults and validate the result.
 Parsing, grammar execution and application methods remain external. Unknown class
 IDs, members, duplicate rules/members and captures needing undeclared bindings
 refuse during generation.
+
+`model_names(&Bundle)` exposes the exact stable model-ID/type-name map and rejects
+name collisions. `member_identifier(&str)` exposes field-name normalization;
+callers must reject duplicate normalized members within each model. Other
+emitters should reuse these helpers instead of copying normalization rules.
+Generated `ContentToken::reference()` exposes a member/index pair for reference
+tokens and `None` for literal text/CDATA, allowing external serializers to walk
+the declared order without interpreting schemas.

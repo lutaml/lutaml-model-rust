@@ -25,7 +25,9 @@ fn error(reason: ErrorReason, id: &str, field: &str, detail: &str) -> Box<Contra
 fn quote(s: &str) -> String {
     serde_json::to_string(s).expect("strings serialize")
 }
-fn identifier(s: &str) -> String {
+/// Deterministic Rust member identifier. Emitters must still reject collisions
+/// among members of the same model after applying this normalization.
+pub fn member_identifier(s: &str) -> String {
     let mut result = String::new();
     for c in s.chars() {
         if c.is_ascii_alphanumeric() {
@@ -54,7 +56,9 @@ fn identifier(s: &str) -> String {
     }
     result
 }
-fn names(bundle: &Bundle) -> ContractResult<BTreeMap<String, String>> {
+/// Stable model-ID to Rust type-name map, with runtime-name and model collisions
+/// rejected using the same rules as generated structs and PARG constructors.
+pub fn model_names(bundle: &Bundle) -> ContractResult<BTreeMap<String, String>> {
     let mut used: BTreeSet<String> = [
         "Presence",
         "ValidationError",
@@ -96,7 +100,7 @@ fn names(bundle: &Bundle) -> ContractResult<BTreeMap<String, String>> {
         .models
         .iter()
         .map(|(id, m)| {
-            let name = identifier(&m.model);
+            let name = member_identifier(&m.model);
             if !used.insert(name.clone()) {
                 return Err(error(
                     ErrorReason::ReservedMember,
@@ -189,7 +193,7 @@ impl ModelEmitter for RustEmitter {
         bundle: &Bundle,
         bindings: &TypeBindings,
     ) -> ContractResult<SourceMap> {
-        let names = names(bundle)?;
+        let names = model_names(bundle)?;
         let mut output = include_str!("runtime.rs.txt").to_owned();
         let mut type_names: BTreeSet<String> = names.values().cloned().collect();
         for (id, m) in &bundle.models {
@@ -215,7 +219,7 @@ impl ModelEmitter for RustEmitter {
                         "reserved ordered-content member",
                     ));
                 }
-                if !fields.insert(identifier(&a.name)) {
+                if !fields.insert(member_identifier(&a.name)) {
                     return Err(error(
                         ErrorReason::ReservedMember,
                         id,
@@ -260,7 +264,7 @@ impl ModelEmitter for RustEmitter {
                             "invalid discriminator declaration",
                         ));
                     }
-                    ty = format!("{name}_{}_Union", identifier(&a.name));
+                    ty = format!("{name}_{}_Union", member_identifier(&a.name));
                     if !type_names.insert(ty.clone()) {
                         return Err(error(
                             ErrorReason::ReservedMember,
@@ -323,7 +327,7 @@ impl ModelEmitter for RustEmitter {
                     for value in values {
                         validate_literal(a, value, id, bundle)?;
                     }
-                    let en = format!("{name}_{}_Enum", identifier(&a.name));
+                    let en = format!("{name}_{}_Enum", member_identifier(&a.name));
                     if !type_names.insert(en.clone()) {
                         return Err(error(
                             ErrorReason::ReservedMember,
@@ -364,7 +368,7 @@ impl ModelEmitter for RustEmitter {
             }
             writeln!(output,"#[allow(non_camel_case_types, non_snake_case)]\n#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(deny_unknown_fields)]\npub struct {name} {{").unwrap();
             for (a, ty) in m.attributes.iter().zip(&types) {
-                writeln!(output,"#[serde(rename = {}, default, skip_serializing_if = \"Presence::is_absent\")]\npub {}: Presence<{}>,",quote(&a.name),identifier(&a.name),shape(a,ty)).unwrap();
+                writeln!(output,"#[serde(rename = {}, default, skip_serializing_if = \"Presence::is_absent\")]\npub {}: Presence<{}>,",quote(&a.name),member_identifier(&a.name),shape(a,ty)).unwrap();
             }
             if m.ordered_content.is_some() {
                 output.push_str("#[serde(default, skip_serializing_if = \"Presence::is_absent\")]\npub __lml_content: Presence<Vec<ContentToken>>,\n");
@@ -376,7 +380,7 @@ impl ModelEmitter for RustEmitter {
             )
             .unwrap();
             for a in &m.attributes {
-                writeln!(output, "{}: Presence::Absent,", identifier(&a.name)).unwrap();
+                writeln!(output, "{}: Presence::Absent,", member_identifier(&a.name)).unwrap();
             }
             if m.ordered_content.is_some() {
                 output.push_str("__lml_content: Presence::Absent,\n");
@@ -388,7 +392,7 @@ impl ModelEmitter for RustEmitter {
             )
             .unwrap();
             for (a, ty) in m.attributes.iter().zip(&types) {
-                let field = identifier(&a.name);
+                let field = member_identifier(&a.name);
                 if let DefaultValue::Present(v) = &a.default {
                     writeln!(output,"if self.{field}.is_absent() {{ self.{field}=serde_json::from_str::<Presence<{}>>({}).map_err(|_|invalid({}, {}, \"non_serializable_default\"))?; }}",shape(a,ty),quote(&serde_json::to_string(v).unwrap()),quote(id),quote(&a.name)).unwrap();
                 } else if a.initialize_empty {
@@ -397,7 +401,7 @@ impl ModelEmitter for RustEmitter {
             }
             output.push_str("Ok(()) }\npub fn validate(&self)->Result<(),ValidationError>{\n");
             for a in &m.attributes {
-                let field = identifier(&a.name);
+                let field = member_identifier(&a.name);
                 let err = format!(
                     "invalid({}, {}, \"invalid_document\")",
                     quote(id),
@@ -449,7 +453,7 @@ impl ModelEmitter for RustEmitter {
                 .unwrap();
                 output.push_str("if let Presence::Value(tokens)=&self.__lml_content { let mut seen=std::collections::BTreeSet::new(); for token in tokens { if let Some((member,index))=token.reference() { let count=match member {\n");
                 for a in &m.attributes {
-                    let field = identifier(&a.name);
+                    let field = member_identifier(&a.name);
                     let count = match a.collection {
                         Collection::Scalar(_) => "1",
                         Collection::Bounded { .. } => "v.len() as u64",
@@ -581,7 +585,7 @@ impl PargBindingEmitter for RustEmitter {
         bundle: &Bundle,
         bindings: &[PargClassBinding],
     ) -> ContractResult<SourceMap> {
-        let names = names(bundle)?;
+        let names = model_names(bundle)?;
         let mut output=String::from("// Compile-time PARG capture constructors; parsing and application behavior are external.\nuse super::models::*;\n");
         let mut used = BTreeSet::new();
         for binding in bindings {
@@ -593,7 +597,7 @@ impl PargBindingEmitter for RustEmitter {
                     "unknown PARG class",
                 )
             })?;
-            let function = format!("bind_{}", identifier(&binding.rule));
+            let function = format!("bind_{}", member_identifier(&binding.rule));
             if !used.insert(function.clone()) {
                 return Err(error(
                     ErrorReason::ReservedMember,
@@ -644,7 +648,7 @@ impl PargBindingEmitter for RustEmitter {
                 args.push(format!("capture_{index}: {ty}"));
                 assignments.push(format!(
                     "{}: Presence::Value(capture_{index})",
-                    identifier(member)
+                    member_identifier(member)
                 ));
                 writeln!(
                     output,

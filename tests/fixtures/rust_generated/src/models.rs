@@ -43,7 +43,7 @@ pub enum ContentToken {
  Cdata { #[serde(flatten)] source: TextSource },
 }
 impl ContentToken {
- fn reference(&self) -> Option<(&str,u64)> { match self {
+ pub fn reference(&self) -> Option<(&str,u64)> { match self {
  Self::Element { attribute,index } | Self::Text { source: TextSource::Member { attribute,index } } | Self::Cdata { source: TextSource::Member { attribute,index } } => Some((attribute,*index)),
  _ => None,
  } }
