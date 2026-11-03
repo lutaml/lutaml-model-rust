@@ -40,7 +40,7 @@ fn parse_json(input:&str,id:&str)->ContractResult<Value>{
      while let Some(k)=a.next_key::<String>()?{
       // With serde_json arbitrary_precision (always on for consumers of this crate)
       // every JSON number arrives as a one-entry map, never through visit_f64.
-      if first && k=="$serde_json::private::Number"{let n:String=a.next_value()?;return plain_integer(&n).map(|v|Unique(v)).map_err(serde::de::Error::custom);}
+      if first && k=="$serde_json::private::Number"{let n:String=a.next_value()?;return plain_integer(&n).map(Unique).map_err(serde::de::Error::custom);}
       first=false;
       let Unique(x)=a.next_value()?;
       if v.insert(k,x).is_some(){return Err(serde::de::Error::custom("duplicate JSON key"));}

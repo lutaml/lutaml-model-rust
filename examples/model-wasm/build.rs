@@ -11,6 +11,10 @@ mod generator;
 #[allow(dead_code)]
 #[path = "../../src/lml/mod.rs"]
 mod lml;
+
+#[allow(dead_code)]
+#[path = "../../src/values/mod.rs"]
+mod values;
 use contracts::*;
 use std::{env, fs, path::PathBuf};
 fn main() {
