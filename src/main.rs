@@ -1,12 +1,66 @@
-fn main() -> std::process::ExitCode {
-    if std::env::args()
-        .skip(1)
-        .any(|arg| arg == "--help" || arg == "-h")
+use lutaml_model::{artifacts::Artifacts, lml, InputFormat};
+use std::{error::Error, path::PathBuf};
+const HELP: &str = "lutaml-model <generate|check> --input BUNDLE --output DIR [--format json|yaml] [--manifest-sha256 sha256:HEX]\ncheck requires a caller-pinned --manifest-sha256. generate prints this digest.\nGenerated mod.rs uses lutaml-model runtime plus pinned serde and serde_json dependencies.";
+fn run() -> Result<(), Box<dyn Error>> {
+    let mut args = std::env::args().skip(1);
+    let Some(command) = args.next() else {
+        return Err(HELP.into());
+    };
+    if command == "--help" || command == "-h" {
+        println!("{HELP}");
+        return Ok(());
+    }
+    if command != "generate" && command != "check" {
+        return Err("expected generate or check".into());
+    }
+    let (mut input, mut output, mut format, mut expected) = (None, None, None, None);
+    while let Some(arg) = args.next() {
+        let slot = match arg.as_str() {
+            "--input" => &mut input,
+            "--output" => &mut output,
+            "--format" => &mut format,
+            "--manifest-sha256" => &mut expected,
+            _ => return Err(format!("unknown option: {arg}").into()),
+        };
+        if slot.is_some() {
+            return Err(format!("duplicate option: {arg}").into());
+        }
+        *slot = Some(args.next().ok_or("option requires a value")?);
+    }
+    let input = PathBuf::from(input.ok_or("--input is required")?);
+    let output = PathBuf::from(output.ok_or("--output is required")?);
+    let format = match format
+        .as_deref()
+        .or_else(|| input.extension().and_then(|s| s.to_str()))
     {
-        println!("lutaml-model: portable LML Rust contracts (generation CLI integration pending)");
-        std::process::ExitCode::SUCCESS
+        Some("json") => InputFormat::Json,
+        Some("yaml" | "yml") => InputFormat::Yaml,
+        _ => return Err("input format must be json or yaml".into()),
+    };
+    let snapshot = lml::load(&std::fs::read(input)?, format)?;
+    let artifacts = Artifacts::generate(&snapshot)?;
+    if command == "check" {
+        artifacts.verify(
+            &output,
+            &expected.ok_or("check requires --manifest-sha256")?,
+        )?;
     } else {
-        eprintln!("generation CLI is not available in the contract bootstrap; use --help");
-        std::process::ExitCode::FAILURE
+        if let Some(expected) = expected {
+            if artifacts.manifest_digest()? != expected {
+                return Err("expected manifest checksum mismatch".into());
+            }
+        }
+        artifacts.write(&output)?;
+    }
+    println!("{}", artifacts.manifest_digest()?);
+    Ok(())
+}
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::ExitCode::FAILURE
+        }
     }
 }
