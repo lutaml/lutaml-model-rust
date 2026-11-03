@@ -6,8 +6,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use std::collections::BTreeMap;
 use values::{
-    parse_decimal, render_decimal, require_binding, validate_decimal_facets, ExactDecimal,
-    ExactInteger,
+    is_exact_decimal, is_exact_integer, parse_decimal, render_decimal, require_binding,
+    validate_decimal_facets, ExactDecimal, ExactInteger,
 };
 
 #[test]
@@ -108,13 +108,13 @@ fn custom_bindings_are_explicit() {
 fn numeric_facets_use_exact_comparison_and_value_digits() {
     let value = ExactDecimal::parse("1.2300").unwrap();
     let facets = BTreeMap::from([
-        ("minInclusive".into(), NeutralValue::String("1.23".into())),
-        ("fractionDigits".into(), NeutralValue::Unsigned(2)),
-        ("totalDigits".into(), NeutralValue::Unsigned(3)),
+        ("min_inclusive".into(), NeutralValue::String("1.23".into())),
+        ("fraction_digits".into(), NeutralValue::Unsigned(2)),
+        ("total_digits".into(), NeutralValue::Unsigned(3)),
     ]);
     validate_decimal_facets(&value, &facets).unwrap();
     assert_eq!(value.rational(), &parse_decimal("1.23").unwrap());
-    let bad = BTreeMap::from([("maxExclusive".into(), NeutralValue::String("1.23".into()))]);
+    let bad = BTreeMap::from([("max_exclusive".into(), NeutralValue::String("1.23".into()))]);
     assert_eq!(
         validate_decimal_facets(&value, &bad).unwrap_err().reason,
         ErrorReason::InvalidDocument
@@ -211,4 +211,65 @@ fn portable_float_refuses_json_numbers_and_non_finite_values() {
     assert_eq!(values::float_wire(1e-5), "1.0e-5");
     assert_eq!(values::float_wire(9.99e14), "999000000000000.0");
     assert_eq!(values::float_wire(1e15), "1.0e15");
+}
+
+/// L7: one lexical rule, shared with the loader's default/facet checks.
+#[test]
+fn exact_lexical_rule_is_shared_by_values_and_the_loader() {
+    for ok in [
+        "0", "1", "-1", "+1", "1.5", "5.", ".5", "-.5", "+.5", "007.5",
+    ] {
+        assert!(is_exact_decimal(ok), "{ok}");
+        assert!(ExactDecimal::parse(ok).is_ok(), "{ok}");
+    }
+    for bad in [
+        "", ".", "-.", "+", "1e2", "1_0", "1.2.3", " 1", "--1", "1,5",
+    ] {
+        assert!(!is_exact_decimal(bad), "{bad}");
+        assert!(ExactDecimal::parse(bad).is_err(), "{bad}");
+    }
+    for ok in ["0", "7", "-7", "+7", "007"] {
+        assert!(is_exact_integer(ok), "{ok}");
+        assert!(ExactInteger::parse(ok).is_ok(), "{ok}");
+    }
+    for bad in ["", "+", "-", "7.", ".7", "7.0", "1e2", "--7"] {
+        assert!(!is_exact_integer(bad), "{bad}");
+        assert!(ExactInteger::parse(bad).is_err(), "{bad}");
+    }
+}
+
+/// L2: facet names are the snake_case contract names.
+#[test]
+fn decimal_facets_use_contract_snake_case_names() {
+    let value = ExactDecimal::parse("1.23").unwrap();
+    for (name, bound, ok) in [
+        ("min_inclusive", NeutralValue::String("1.23".into()), true),
+        ("min_exclusive", NeutralValue::String("1.23".into()), false),
+        ("max_inclusive", NeutralValue::String("1.23".into()), true),
+        ("max_exclusive", NeutralValue::String("1.24".into()), true),
+        ("total_digits", NeutralValue::Unsigned(3), true),
+        ("total_digits", NeutralValue::Unsigned(2), false),
+        ("fraction_digits", NeutralValue::Unsigned(2), true),
+        ("fraction_digits", NeutralValue::Unsigned(1), false),
+    ] {
+        let facets = BTreeMap::from([(name.to_string(), bound)]);
+        assert_eq!(
+            validate_decimal_facets(&value, &facets).is_ok(),
+            ok,
+            "{name}"
+        );
+    }
+    for camel in [
+        "minInclusive",
+        "maxExclusive",
+        "totalDigits",
+        "fractionDigits",
+    ] {
+        let facets = BTreeMap::from([(camel.to_string(), NeutralValue::Unsigned(9))]);
+        assert_eq!(
+            validate_decimal_facets(&value, &facets).unwrap_err().reason,
+            ErrorReason::UnsupportedType,
+            "{camel}"
+        );
+    }
 }

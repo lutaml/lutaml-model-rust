@@ -193,7 +193,7 @@ pub(super) fn validate_refs(attr: &Node, bundle: &Node, at: &str) -> ContractRes
                 typed_value(value, &base, &format!("{at}/default/value"))?;
             }
         }
-        if let Some(values) = attr.get("enum").or_else(|| attr.get("values")) {
+        if let Some(values) = attr.get("values") {
             for (i, value) in values.array().unwrap().iter().enumerate() {
                 super::defaults::enum_value(value, &base, &format!("{at}/values/{i}"))?;
             }
@@ -201,13 +201,6 @@ pub(super) fn validate_refs(attr: &Node, bundle: &Node, at: &str) -> ContractRes
     }
     if let Some(value) = attr.get("default").and_then(|d| d.get("value")) {
         validate_member(value, attr, bundle, &format!("{at}/default/value"))?;
-    }
-    if let Some(id) = attr.get("reference") {
-        target(
-            bundle.get("models").unwrap(),
-            id.string().unwrap(),
-            &pointer(at, "reference"),
-        )?;
     }
     if let Some(d) = attr.get("discriminator") {
         discriminator_refs(d, bundle, &pointer(at, "discriminator"))?;

@@ -22,18 +22,40 @@ fn failure(reason: ErrorReason, detail: impl Into<String>) -> Box<ContractError>
     })
 }
 
-/// Read a plain decimal lexical form without converting through f64.
-pub fn parse_decimal(input: &str) -> ContractResult<BigRational> {
-    let (negative, unsigned) = match input.as_bytes().first() {
+fn unsigned(input: &str) -> (bool, &str) {
+    match input.as_bytes().first() {
         Some(b'-') => (true, &input[1..]),
         Some(b'+') => (false, &input[1..]),
         _ => (false, input),
-    };
+    }
+}
+fn digits(part: &str) -> bool {
+    part.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The one lexical rule for exact decimals, shared by `ExactDecimal`, the
+/// loader's default/facet checks and generated types: an optional sign, then
+/// digits with an optional fraction (`1`, `1.5`, `5.`, `.5`, `+1`; never `.`,
+/// exponents or separators). It is the set Ruby's `BigDecimal()` reads and the
+/// shared exact-vectors fixture records.
+pub fn is_exact_decimal(input: &str) -> bool {
+    let (_, unsigned) = unsigned(input);
     let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    if (whole.is_empty() && fraction.is_empty())
-        || !whole.bytes().all(|b| b.is_ascii_digit())
-        || !fraction.bytes().all(|b| b.is_ascii_digit())
-    {
+    !(whole.is_empty() && fraction.is_empty()) && digits(whole) && digits(fraction)
+}
+
+/// The one lexical rule for exact integers: an optional sign and one or more
+/// digits (`7`, `-7`, `+7`; never `7.`, `.7` or exponents).
+pub fn is_exact_integer(input: &str) -> bool {
+    let (_, unsigned) = unsigned(input);
+    !unsigned.is_empty() && digits(unsigned)
+}
+
+/// Read a plain decimal lexical form without converting through f64.
+pub fn parse_decimal(input: &str) -> ContractResult<BigRational> {
+    let (negative, unsigned) = unsigned(input);
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if !is_exact_decimal(input) {
         return Err(failure(
             ErrorReason::InvalidDocument,
             "expected a plain decimal string",
@@ -252,11 +274,7 @@ pub struct ExactInteger {
 }
 impl ExactInteger {
     pub fn parse(input: &str) -> ContractResult<Self> {
-        let unsigned = input
-            .strip_prefix('-')
-            .or_else(|| input.strip_prefix('+'))
-            .unwrap_or(input);
-        if unsigned.is_empty() || !unsigned.bytes().all(|b| b.is_ascii_digit()) {
+        if !is_exact_integer(input) {
             return Err(failure(
                 ErrorReason::InvalidDocument,
                 "expected an integer decimal string",
@@ -310,7 +328,7 @@ pub fn validate_decimal_facets(
 ) -> ContractResult<()> {
     for (name, bound) in facets {
         let accepted = match name.as_str() {
-            "minInclusive" | "minExclusive" | "maxInclusive" | "maxExclusive" => {
+            "min_inclusive" | "min_exclusive" | "max_inclusive" | "max_exclusive" => {
                 let NeutralValue::String(text) = bound else {
                     return Err(failure(
                         ErrorReason::InvalidDocument,
@@ -319,13 +337,13 @@ pub fn validate_decimal_facets(
                 };
                 let threshold = parse_decimal(text)?;
                 match name.as_str() {
-                    "minInclusive" => value.value >= threshold,
-                    "minExclusive" => value.value > threshold,
-                    "maxInclusive" => value.value <= threshold,
+                    "min_inclusive" => value.value >= threshold,
+                    "min_exclusive" => value.value > threshold,
+                    "max_inclusive" => value.value <= threshold,
                     _ => value.value < threshold,
                 }
             }
-            "totalDigits" | "fractionDigits" => {
+            "total_digits" | "fraction_digits" => {
                 let limit = match bound {
                     NeutralValue::Unsigned(n) => *n,
                     NeutralValue::Signed(n) if *n >= 0 => *n as u64,
@@ -338,7 +356,7 @@ pub fn validate_decimal_facets(
                 };
                 let rendered = render_decimal(&value.value)?;
                 let unsigned = rendered.trim_start_matches('-');
-                let digits = if name == "fractionDigits" {
+                let digits = if name == "fraction_digits" {
                     unsigned.split_once('.').map_or(0, |(_, part)| part.len())
                 } else {
                     unsigned

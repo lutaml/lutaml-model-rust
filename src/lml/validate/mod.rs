@@ -113,6 +113,56 @@ fn strings(n: &Node, at: &str, sorted: bool) -> ContractResult<()> {
     }
     Ok(())
 }
+/// Pinned names that break Serializable (Ruby RESERVED_ATTRIBUTE_NAMES).
+const RESERVED_ATTRIBUTE_NAMES: &[&str] = &[
+    "__id__",
+    "__send__",
+    "attribute_order",
+    "class",
+    "doctype",
+    "element_order",
+    "encoding",
+    "extract_register_id",
+    "import_declaration_plan",
+    "initialize",
+    "initialize_clone",
+    "initialize_copy",
+    "initialize_dup",
+    "lutaml_register",
+    "pending_plan_root_element",
+    "prepare_instance_format_options",
+    "public_send",
+    "record_mutation",
+    "to_format",
+    "to_json",
+    "to_xml",
+    "to_yaml",
+    "value_set_for",
+    "xml_declaration",
+    "xml_ns_prefixes",
+];
+/// Attribute names match `\\A[a-z_][a-zA-Z0-9_]*\\z` and avoid the reserved list.
+fn attribute_name(name: &str, at: &str) -> ContractResult<()> {
+    let mut chars = name.chars();
+    let lexical = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !lexical {
+        return Err(invalid(
+            at,
+            format!("attribute name {name:?} must match \\A[a-z_][a-zA-Z0-9_]*\\z"),
+        ));
+    }
+    if RESERVED_ATTRIBUTE_NAMES.contains(&name) {
+        return Err(failure(
+            ErrorReason::ReservedMember,
+            at,
+            format!("attribute name {name} breaks Serializable (reserved attribute name)"),
+        ));
+    }
+    Ok(())
+}
 fn portable_name(s: &str) -> bool {
     !s.is_empty()
         && s.split("::").all(|part| {
@@ -161,16 +211,21 @@ pub fn validate(n: &Node) -> ContractResult<()> {
         let version = field(n, "lml", "")?.integer();
         match version {
             Some(1) => {
+                // Mirrors Ruby DocumentValidator#document_v1 exactly: present
+                // members must have their declared shape (null is not "absent").
                 string(field(n, "model", "")?, "/model")?;
+                if let Some(v) = n.get("register") {
+                    if !matches!(v, Node::Null | Node::String(_)) {
+                        return Err(invalid("/register", "register must be a string"));
+                    }
+                }
                 if let Some(v) = n.get("attributes") {
-                    if v != &Node::Null {
-                        array(v, "/attributes")?;
+                    for (i, attr) in array(v, "/attributes")?.iter().enumerate() {
+                        object(attr, &format!("/attributes/{i}"))?;
                     }
                 }
                 if let Some(v) = n.get("mappings") {
-                    if v != &Node::Null {
-                        object(v, "/mappings")?;
-                    }
+                    object(v, "/mappings")?;
                 }
                 Ok(())
             }
@@ -250,6 +305,7 @@ fn model(n: &Node, id: Option<&str>, at: &str) -> ContractResult<()> {
         let loc = format!("{at}/attributes/{i}");
         let result = (|| {
             let name = text(attr, "name", &loc)?;
+            attribute_name(name, &pointer(&loc, "name"))?;
             if name == "__lml_content" {
                 return Err(failure(
                     ErrorReason::ReservedMember,
@@ -292,7 +348,8 @@ fn model(n: &Node, id: Option<&str>, at: &str) -> ContractResult<()> {
         let loc = pointer(&pointer(at, "mappings"), format);
         let result = match format.as_str() {
             "xml" => xml(mapping, &names, &loc),
-            "json" | "yaml" => key_mapping(mapping, &names, &loc),
+            // toml validates like json/yaml; the typed view refuses it by name.
+            "json" | "yaml" | "toml" => key_mapping(mapping, &names, &loc),
             _ => Err(failure(
                 ErrorReason::UnsupportedFormat,
                 &loc,
