@@ -16,8 +16,8 @@ Exact values remain strings; merged 08d helpers validate integer/decimal lexical
 boundaries without floating conversion. Model fields remain typed; JSON values
 are only temporary input/output buffers. Schema declarations are compiled out.
 
-Mapping-level root/child descriptors bind the single unambiguous mapped model
-collection. `key` names its object key, `value` names the whole object value, and
+Canonical rule-level root/child descriptors bind their own `to` collection.
+Legacy mapping-level descriptors bind a single unambiguous model collection. `key` names its object key, `value` names the whole object value, and
 string/array paths lower nested values. A key-only descriptor preserves the child
 model's remaining JSON mappings; additional explicit paths replace them. Ambiguous
 collection targets, missing keys, overlapping paths, custom codec bindings without
@@ -41,8 +41,9 @@ Snapshot, never a hash of its normalized detached Bundle.
 This replay covers basic portable JSON only. It makes no XML claim and freezes
 no ordered/mixed/polymorphic/keyed oracle expectations affected by 02d. Those
 behaviors currently have synthetic generated-consumer tests. The 02d format/rule
-extensions require a shared typed-contract and 08b validation amendment before
-such exported schemas can be represented without dropping declarations.
+extensions are retained by the shared typed contracts and 08b validation. Target
+operations without an implementation (unknown policy strings, rule-only
+discriminators, polymorphic maps) refuse explicitly instead of dropping metadata.
 
 Model names come directly from `generator::model_names`; normalization is shared
 with actual structs, enums and PARG constructors.

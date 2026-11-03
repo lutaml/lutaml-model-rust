@@ -49,4 +49,13 @@ use serde_json::json;
  assert_eq!(expected,executed);assert_eq!(expected.len(),1);assert_eq!(executed.len(),1);
  println!("profile=portable-exact-json-v1 expected={expected:?} executed={executed:?} expected_count={} executed_count={}",expected.len(),executed.len());
 }
+
+#[test] fn typed_integer_enum_metadata_stays_numeric_and_matches_exact_values() {
+ let model=read_LmlPreservation_TypedEnum_json(r#"{"number":"0001","flag":true}"#).unwrap();
+ assert_eq!(serde_json::from_str::<serde_json::Value>(&write_LmlPreservation_TypedEnum_json(&model).unwrap()).unwrap(),json!({"number":"1","flag":true}));
+ let mut defaulted=read_BigEnum_json("{}").unwrap();assert!(matches!(defaulted.number,Presence::Absent));defaulted.apply_defaults().unwrap();assert_eq!(serde_json::from_str::<serde_json::Value>(&write_BigEnum_json(&defaulted).unwrap()).unwrap(),json!({"number":"9007199254740993123456789"}));
+ let big=read_BigEnum_json(r#"{"number":"009007199254740993123456789"}"#).unwrap();
+ assert_eq!(serde_json::from_str::<serde_json::Value>(&write_BigEnum_json(&big).unwrap()).unwrap(),json!({"number":"9007199254740993123456789"}));
+ for wire in [r#"{"number":"3"}"#,r#"{"number":1}"#,r#"{"number":"9007199254740993123456789"}"#] { assert!(read_LmlPreservation_TypedEnum_json(wire).is_err()); }
+}
 }

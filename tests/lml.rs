@@ -432,14 +432,20 @@ fn xml_compositors_namespace_resets_and_render_policies_are_validated() {
     );
     v["models"]["Example::Node@custom"]["mappings"]["xml"]["rules"][0]["render"]["nil"] =
         json!("execute");
-    let err = refused(
-        &v,
-        ErrorReason::UnsupportedMapping,
-        "/models/Example::Node@custom/mappings/xml/rules/0/render/nil",
+    let graph = parsed(&v).bundle().unwrap();
+    assert_eq!(
+        graph.models["Example::Node@custom"]
+            .mappings
+            .xml
+            .as_ref()
+            .unwrap()
+            .rules[0]
+            .render
+            .as_ref()
+            .unwrap()
+            .nil,
+        RenderAction::Other("execute".into())
     );
-    assert_eq!(err.format.as_deref(), Some("xml"));
-    assert_eq!(err.rule.as_deref(), Some("0"));
-    assert_eq!(err.attribute.as_deref(), Some("amount"));
 }
 
 #[test]
@@ -511,7 +517,7 @@ attributes:
 }
 
 #[test]
-fn boolean_render_policies_normalize_only_the_detached_typed_view() {
+fn boolean_render_policies_preserve_the_original_declared_wire_kind() {
     let mut v = bundle();
     v["models"]["Example::Node@custom"]["mappings"]["json"]["rules"][0]["render"] =
         json!({"nil":true,"empty":true,"default":false});
@@ -526,13 +532,13 @@ fn boolean_render_policies_normalize_only_the_detached_typed_view() {
         .render
         .as_ref()
         .unwrap();
-    assert_eq!(policy.nil, RenderAction::Nil);
-    assert_eq!(policy.empty, RenderAction::Blank);
+    assert_eq!(policy.nil, RenderAction::Boolean(true));
+    assert_eq!(policy.empty, RenderAction::Boolean(true));
     assert!(snapshot.canonical_json().contains(r#""empty":true"#));
     let mut lexical = v.clone();
     lexical["models"]["Example::Node@custom"]["mappings"]["json"]["rules"][0]["render"] =
         json!({"nil":"nil","empty":"blank","default":false});
-    assert_eq!(graph, parsed(&lexical).bundle().unwrap());
+    assert_ne!(graph, parsed(&lexical).bundle().unwrap());
     assert_ne!(snapshot.checksum(), parsed(&lexical).checksum());
     v["models"]["Example::Node@custom"]["mappings"]["json"]["rules"][0]["render"] =
         json!({"nil":false,"empty":false,"default":false});
@@ -546,8 +552,8 @@ fn boolean_render_policies_normalize_only_the_detached_typed_view() {
         .render
         .as_ref()
         .unwrap();
-    assert_eq!(policy.nil, RenderAction::Omit);
-    assert_eq!(policy.empty, RenderAction::Omit);
+    assert_eq!(policy.nil, RenderAction::Boolean(false));
+    assert_eq!(policy.empty, RenderAction::Boolean(false));
 }
 
 #[test]
@@ -574,4 +580,179 @@ fn legacy_yaml_float_checksum_ambiguity_refuses_with_actionable_context() {
         InputFormat::Yaml
     )
     .is_ok());
+}
+
+#[test]
+fn canonical_values_rule_metadata_and_recursive_02d_groups_are_lossless() {
+    let mut v = bundle();
+    let id = "Example::Node@custom";
+    v["capabilities"] = json!(["json", "xml"]);
+    v["models"][id]["attributes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"kind","type":{"kind":"builtin","name":"string"},"values":["node"]}));
+    let leaf = json!({"kind":"element","name":["amount"],"to":"amount","child_mappings":{"id":"key"},"root_mappings":{"id":"key"},"polymorphic_map":{"Example::Node":"node"},"discriminator":{"attribute":"kind","cases":{"node":id}},"render":{"nil":"empty","empty":true,"default":"explicit"}});
+    v["models"][id]["mappings"]["xml"] = json!({"root":{"element":"node","mixed":true},"ordered":true,"mixed_content":true,"rules":[leaf.clone()],"sequence":[{"kind":"sequence","members":[{"kind":"choice","min":0,"max":2,"members":[leaf.clone()]}]}]});
+    v["models"][id]["mappings"]["json"]["rules"][0]["child_mappings"] =
+        json!({"id":"key","name":["body","name"]});
+    v["models"][id]["mappings"]["json"]["rules"][0]["discriminator"] =
+        leaf["discriminator"].clone();
+    v["models"][id]["ordered_content"] = json!({"member":"__lml_content","version":1});
+    let snapshot = parsed(&v);
+    let checksum = snapshot.checksum().to_owned();
+    let graph = snapshot.bundle().unwrap();
+    let m = &graph.models[id];
+    let xml = m.mappings.xml.as_ref().unwrap();
+    assert_eq!(xml.ordered, Some(true));
+    assert_eq!(xml.mixed_content, Some(true));
+    assert_eq!(xml.root.as_ref().unwrap().mixed, Some(true));
+    let choice = &xml.sequence.as_ref().unwrap()[0].members.as_ref().unwrap()[0];
+    assert_eq!(choice.kind, XmlRuleKind::Choice);
+    assert_eq!(choice.min, Some(NeutralValue::Signed(0)));
+    assert_eq!(choice.max, Some(NeutralValue::Signed(2)));
+    let actual = &choice.members.as_ref().unwrap()[0];
+    assert_eq!(
+        serde_json::to_value(actual).unwrap()["child_mappings"],
+        leaf["child_mappings"]
+    );
+    assert_eq!(
+        actual.polymorphic_map.as_ref().unwrap()["Example::Node"],
+        "node"
+    );
+    assert_eq!(actual.discriminator.as_ref().unwrap().cases["node"], id);
+    assert_eq!(
+        actual.render.as_ref().unwrap().nil,
+        RenderAction::Other("empty".into())
+    );
+    assert_eq!(
+        actual.render.as_ref().unwrap().default,
+        RenderAction::Other("explicit".into())
+    );
+    let wire = serde_json::to_value(&graph).unwrap();
+    assert_eq!(
+        wire["models"][id]["attributes"][1]["values"],
+        json!(["node"])
+    );
+    assert!(wire["models"][id]["attributes"][1].get("enum").is_none());
+    assert_eq!(
+        wire["models"][id]["mappings"]["xml"]["sequence"][0]["members"][0]["members"][0]
+            ["root_mappings"],
+        leaf["root_mappings"]
+    );
+    assert_eq!(snapshot.checksum(), checksum);
+    let neutral: NeutralValue = serde_json::from_value(v.clone()).unwrap();
+    let yaml = serde_yaml::to_string(&neutral).unwrap();
+    let from_yaml = load(yaml.as_bytes(), InputFormat::Yaml).unwrap();
+    assert_eq!(from_yaml.checksum(), snapshot.checksum());
+    assert_eq!(from_yaml.bundle().unwrap(), graph);
+    let mut dangling = v.clone();
+    dangling["models"][id]["mappings"]["xml"]["sequence"][0]["members"][0]["members"][0]
+        ["discriminator"]["cases"]["node"] = json!("Missing@default");
+    assert_eq!(
+        load(&bytes(&dangling), InputFormat::Json)
+            .unwrap_err()
+            .reason,
+        ErrorReason::DanglingReference
+    );
+}
+#[test]
+fn canonical_optional_attributes_and_enum_read_alias_preserve_source_identity() {
+    let v = json!({"lml_bundle":1,"roots":["Minimal@default"],"models":{"Minimal@default":{"lml":2,"model":"Minimal","register":"default","attributes":[{"name":"kind","type":{"kind":"builtin","name":"string"},"enum":["a","b"]}]}},"value_types":{},"capabilities":[]});
+    let snapshot = parsed(&v);
+    let graph = snapshot.bundle().unwrap();
+    assert!(!graph.models["Minimal@default"].attributes[0].required);
+    assert!(matches!(
+        graph.models["Minimal@default"].attributes[0].default,
+        DefaultValue::Absent
+    ));
+    assert!(snapshot.canonical_json().contains("\"enum\""));
+    let wire = serde_json::to_value(graph).unwrap();
+    assert_eq!(
+        wire["models"]["Minimal@default"]["attributes"][0]["values"],
+        json!(["a", "b"])
+    );
+    assert!(wire["models"]["Minimal@default"]["attributes"][0]
+        .get("enum")
+        .is_none());
+}
+#[test]
+fn malformed_02d_flags_groups_and_policies_refuse_without_floating_conversion() {
+    let mut v = bundle();
+    let id = "Example::Node@custom";
+    v["models"][id]["mappings"]["json"]["ordered"] = json!("true");
+    assert_eq!(
+        load(&bytes(&v), InputFormat::Json).unwrap_err().reason,
+        ErrorReason::UnsupportedMapping
+    );
+    v = bundle();
+    v["capabilities"] = json!(["xml"]);
+    v["models"][id]["mappings"] = json!({"xml":{"sequence":[1]}});
+    assert!(load(&bytes(&v), InputFormat::Json).is_err());
+    v = bundle();
+    v["models"][id]["mappings"]["json"]["rules"][0]["render"] = json!({"empty":1.25});
+    assert_eq!(
+        load(&bytes(&v), InputFormat::Json).unwrap_err().reason,
+        ErrorReason::InvalidDocument
+    );
+    v = bundle();
+    v["models"][id]["mappings"]["toml"] = json!({"rules":[]});
+    assert_eq!(
+        load(&bytes(&v), InputFormat::Json).unwrap_err().reason,
+        ErrorReason::UnsupportedFormat
+    );
+}
+#[test]
+fn actual_04b_preservation_schema_json_yaml_loads_with_pinned_identity() {
+    use sha2::{Digest, Sha256};
+    let json = include_bytes!("../src/lml/fixtures/02d-preservation.schema.json");
+    let yaml = include_bytes!("../src/lml/fixtures/02d-preservation.schema.yaml");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(json)),
+        "66b86b75d36568c1c353a2d5cf32d0e6562e21e7dfea0004a757d0f774761264"
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(yaml)),
+        "cf40d46e901e4a8e7bb4b7f7ad4365ffec687bef81832663dc136626b3963c3d"
+    );
+    let a = load(json, InputFormat::Json).unwrap();
+    let b = load(yaml, InputFormat::Yaml).unwrap();
+    assert_eq!(
+        a.checksum(),
+        "sha256:81eaac6230a81d4285fb4ea743f202234ef3f3c48482ca60ce9e9b642a5622e5"
+    );
+    assert_eq!(a.checksum(), b.checksum());
+    assert_eq!(a.bundle().unwrap(), b.bundle().unwrap());
+    let graph = a.bundle().unwrap();
+    assert_eq!(graph.models.len(), 8);
+    assert!(graph.models["LmlPreservation::Mixed@default"]
+        .ordered_content
+        .is_some());
+    let states = &graph.models["LmlPreservation::States@default"]
+        .mappings
+        .json
+        .as_ref()
+        .unwrap()
+        .rules;
+    assert!(states
+        .iter()
+        .any(|r| r.render.as_ref().is_some_and(
+            |p| p.empty == RenderAction::Boolean(true) && p.nil == RenderAction::Boolean(true)
+        )));
+}
+
+#[test]
+fn exact_integer_defaults_compare_to_typed_numeric_enum_metadata() {
+    let mut schema: Value = serde_json::from_slice(include_bytes!(
+        "../src/lml/fixtures/02d-preservation.schema.json"
+    ))
+    .unwrap();
+    schema["models"]["LmlPreservation::TypedEnum@default"]["attributes"][0]["default"] =
+        json!({"present":true,"value":"0001"});
+    let snapshot = parsed(&schema);
+    let graph = snapshot.bundle().unwrap();
+    assert_eq!(
+        graph.models["LmlPreservation::TypedEnum@default"].attributes[0].enumeration,
+        Some(vec![NeutralValue::Signed(1), NeutralValue::Signed(2)])
+    );
+    assert!(snapshot.canonical_json().contains("\"values\":[1,2]"));
 }

@@ -353,3 +353,28 @@ fn public_naming_api_matches_static_models_and_rejects_collisions() {
         ErrorReason::ReservedMember
     );
 }
+
+#[test]
+fn rule_only_discriminators_fail_explicitly_instead_of_losing_static_types() {
+    let mut b = bundle();
+    let rule = KeyRule {
+        key: vec!["text".into()],
+        to: "text".into(),
+        discriminator: Some(Discriminator {
+            attribute: "kind".into(),
+            cases: BTreeMap::from([("node".into(), "Node@default".into())]),
+        }),
+        ..Default::default()
+    };
+    b.models.get_mut("Leaf@default").unwrap().mappings.json = Some(KeyMapping {
+        rules: vec![rule],
+        ..Default::default()
+    });
+    assert_eq!(
+        RustEmitter
+            .generate_models(&b, &TypeBindings::new())
+            .unwrap_err()
+            .reason,
+        ErrorReason::UnsupportedMapping
+    );
+}
