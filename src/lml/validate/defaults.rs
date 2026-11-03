@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 pub(super) fn builtin(n: &Node, at: &str) -> ContractResult<()> {
     let name = string(n, at)?;
@@ -47,8 +48,6 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
             "default",
             "initialize_empty",
             "discriminator",
-            "reference",
-            "enum",
             "values",
         ],
         at,
@@ -104,15 +103,15 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
             ))
         }
     }
-    if n.get("enum").is_some() && n.get("values").is_some() {
-        return Err(invalid(at, "enum and values cannot both be supplied"));
-    }
-    if let Some(values) = n.get("enum").or_else(|| n.get("values")) {
+    if let Some(values) = n.get("values") {
+        let mut keys = HashSet::new();
         let mut seen = Vec::new();
-        for (i, value) in array(values, &pointer(at, "enum"))?.iter().enumerate() {
+        for (i, value) in array(values, &pointer(at, "values"))?.iter().enumerate() {
             enum_value(value, typ, &format!("{at}/values/{i}"))?;
-            if seen.contains(&value) {
-                return Err(invalid(&pointer(at, "enum"), "duplicate enum value"));
+            // Hashed identity keeps the duplicate check linear in the list.
+            let identity = serde_json::to_string(value).expect("tree nodes serialize");
+            if !keys.insert(identity) {
+                return Err(invalid(&pointer(at, "values"), "duplicate enum value"));
             }
             seen.push(value);
         }
@@ -132,9 +131,6 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
     if let Some(d) = n.get("discriminator") {
         discriminator(d, &pointer(at, "discriminator"))?;
     }
-    if let Some(r) = n.get("reference") {
-        string(r, &pointer(at, "reference"))?;
-    }
     Ok(())
 }
 pub(super) fn check_count(len: usize, bounds: &Node, at: &str) -> ContractResult<()> {
@@ -150,21 +146,14 @@ pub(super) fn check_count(len: usize, bounds: &Node, at: &str) -> ContractResult
     }
     Ok(())
 }
+/// The one lexical rule for exact numbers, shared with `values::ExactDecimal`
+/// and `values::ExactInteger` (see `values::is_exact_decimal`/`is_exact_integer`).
 pub(super) fn exact(s: &str, decimal: bool) -> bool {
-    let s = s
-        .strip_prefix('-')
-        .or_else(|| s.strip_prefix('+'))
-        .unwrap_or(s);
-    let mut parts = s.split('.');
-    let first = parts.next().unwrap();
-    let second = parts.next();
-    !first.is_empty()
-        && first.bytes().all(|c| c.is_ascii_digit())
-        && parts.next().is_none()
-        && match second {
-            None => true,
-            Some(v) => decimal && !v.is_empty() && v.bytes().all(|c| c.is_ascii_digit()),
-        }
+    if decimal {
+        crate::values::is_exact_decimal(s)
+    } else {
+        crate::values::is_exact_integer(s)
+    }
 }
 pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<()> {
     if value == &Node::Null {
@@ -369,7 +358,7 @@ pub(super) fn validate_member(
         } else {
             typed_value(value, typ, at)?;
         }
-        if let Some(values) = attr.get("enum").or_else(|| attr.get("values")) {
+        if let Some(values) = attr.get("values") {
             if !values
                 .array()
                 .unwrap()

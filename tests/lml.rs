@@ -149,7 +149,7 @@ fn refuses_bad_versions_and_duplicate_json_or_yaml_keys() {
         InputFormat::Json,
     )
     .unwrap_err();
-    assert_eq!(duplicate.reason, ErrorReason::DuplicateId);
+    assert_eq!(duplicate.reason, ErrorReason::InvalidDocument);
     assert_eq!(duplicate.location, "/models/X@default");
     for wire in [
         "lml: 1\nmodel: A\nmodel: B\n",
@@ -381,7 +381,7 @@ fn validates_per_instance_mixed_order_and_all_member_occurrences() {
     m["ordered_content"] = json!({"member":"__lml_content","version":1});
     m["attributes"][0]["collection"] = json!({"min":0,"max":null});
     m["attributes"][0]["default"] = json!({"present":false});
-    m["mappings"] = json!({"xml":{"root":null,"namespace":{"mode":"unqualified"},"rules":[{"kind":"element","name":["amount"],"to":"amount","namespace":{"mode":"uri","uri":"urn:example"}}]}});
+    m["mappings"] = json!({"xml":{"namespace":{"mode":"unqualified"},"rules":[{"kind":"element","name":["amount"],"to":"amount","namespace":{"mode":"uri","uri":"urn:example"}}]}});
     let m: ModelDocument = serde_json::from_value(m).unwrap();
     let data = BTreeMap::from([(
         "amount".into(),
@@ -447,9 +447,9 @@ fn xml_compositors_namespace_resets_and_render_policies_are_validated() {
     let mut v = bundle();
     v["capabilities"] = json!(["xml"]);
     v["models"]["Example::Node@custom"]["mappings"] = json!({"xml":{
-        "root":null,"namespace":{"mode":"unqualified"},
+        "namespace":{"mode":"unqualified"},
         "rules":[{"kind":"element","name":["amount","alternate"],"to":"amount","namespace":{"mode":"uri","uri":"urn:amount","prefix":"a"},"render":{"nil":"omit","empty":"as_blank","default":false}}],
-        "sequence":{"kind":"sequence","members":["amount",{"kind":"choice","members":["amount"],"min":0,"max":1}],"min":0,"max":null}}});
+        "sequence":[{"kind":"sequence","members":[{"kind":"element","name":["amount"],"to":"amount"},{"kind":"choice","min":0,"max":1,"members":[{"kind":"element","name":["amount"],"to":"amount"}]}],"min":0,"max":null}]}});
     let graph = parsed(&v).bundle().unwrap();
     let xml = graph.models["Example::Node@custom"]
         .mappings
@@ -544,7 +544,7 @@ attributes:
         InputFormat::Yaml,
     )
     .unwrap_err();
-    assert_eq!(duplicate.reason, ErrorReason::DuplicateId);
+    assert_eq!(duplicate.reason, ErrorReason::InvalidDocument);
     assert_eq!(duplicate.location, "/models/A@default");
 }
 
@@ -598,7 +598,7 @@ fn legacy_yaml_float_checksum_ambiguity_refuses_with_actionable_context() {
     assert_eq!(error.klass.as_deref(), Some("Legacy"));
     assert_eq!(error.format.as_deref(), Some("yaml"));
     assert!(error.detail.unwrap().contains("producer-canonical v1 JSON"));
-    let canonical = r#"{"lml":1,"model":"Legacy","attributes":[{"name":"amount","type":"float","default":1e+15}],"mappings":{}}"#;
+    let canonical = r#"{"lml":1,"model":"Legacy","attributes":[{"name":"amount","type":"float","default":0.25}],"mappings":{}}"#;
     assert_eq!(
         load(canonical.as_bytes(), InputFormat::Json)
             .unwrap()
@@ -688,8 +688,8 @@ fn canonical_values_rule_metadata_and_recursive_02d_groups_are_lossless() {
     );
 }
 #[test]
-fn canonical_optional_attributes_and_enum_read_alias_preserve_source_identity() {
-    let v = json!({"lml_bundle":1,"roots":["Minimal@default"],"models":{"Minimal@default":{"lml":2,"model":"Minimal","register":"default","attributes":[{"name":"kind","type":{"kind":"builtin","name":"string"},"enum":["a","b"]}]}},"value_types":{},"capabilities":[]});
+fn canonical_optional_attributes_and_values_preserve_source_identity() {
+    let v = json!({"lml_bundle":1,"roots":["Minimal@default"],"models":{"Minimal@default":{"lml":2,"model":"Minimal","register":"default","attributes":[{"name":"kind","type":{"kind":"builtin","name":"string"},"values":["a","b"]}]}},"value_types":{},"capabilities":[]});
     let snapshot = parsed(&v);
     let graph = snapshot.bundle().unwrap();
     assert!(!graph.models["Minimal@default"].attributes[0].required);
@@ -697,7 +697,7 @@ fn canonical_optional_attributes_and_enum_read_alias_preserve_source_identity() 
         graph.models["Minimal@default"].attributes[0].default,
         DefaultValue::Absent
     ));
-    assert!(snapshot.canonical_json().contains("\"enum\""));
+    assert!(snapshot.canonical_json().contains("\"values\""));
     let wire = serde_json::to_value(graph).unwrap();
     assert_eq!(
         wire["models"]["Minimal@default"]["attributes"][0]["values"],
@@ -730,7 +730,7 @@ fn malformed_02d_flags_groups_and_policies_refuse_without_floating_conversion() 
     v["models"][id]["mappings"]["toml"] = json!({"rules":[]});
     assert_eq!(
         load(&bytes(&v), InputFormat::Json).unwrap_err().reason,
-        ErrorReason::UnsupportedFormat
+        ErrorReason::CapabilityMissing
     );
 }
 #[test]
@@ -787,4 +787,275 @@ fn exact_integer_defaults_compare_to_typed_numeric_enum_metadata() {
         Some(vec![NeutralValue::Signed(1), NeutralValue::Signed(2)])
     );
     assert!(snapshot.canonical_json().contains("\"values\":[1,2]"));
+}
+
+/// Case -> Ruby verdict -> Rust verdict. `ruby` was measured with
+/// `tests/fixtures/ruby_parity_measure.rb` against
+/// lutaml-model 7e23cd7 `DocumentValidator`; `rust` is pinned here. Where
+/// the accept/reject outcomes differ the row must carry a `divergence` note
+/// (Rust deliberately stricter); an unexplained divergence fails the test.
+#[test]
+fn ruby_document_validator_parity_table() {
+    let table: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/ruby-parity.json")).unwrap();
+    let mut dump = BTreeMap::new();
+    let mut failures = Vec::new();
+    for row in &table {
+        let name = row["name"].as_str().unwrap();
+        let input = match row.get("raw") {
+            Some(raw) => raw.as_str().unwrap().as_bytes().to_vec(),
+            None => bytes(&row["doc"]),
+        };
+        let (rust, checksum) = match load(&input, InputFormat::Json) {
+            Ok(snapshot) => ("OK".to_string(), Some(snapshot.checksum().to_string())),
+            Err(e) => (
+                format!(
+                    "ERR {}",
+                    serde_json::to_value(&e.reason).unwrap().as_str().unwrap()
+                ),
+                None,
+            ),
+        };
+        dump.insert(
+            name.to_string(),
+            json!({"verdict": rust, "checksum": checksum}),
+        );
+        if std::env::var_os("PARITY_DUMP").is_some() {
+            continue;
+        }
+        let ruby = row["ruby"].as_str().unwrap();
+        if rust != row["rust"].as_str().unwrap() {
+            failures.push(format!(
+                "{name}: pinned rust {} but got {rust}",
+                row["rust"]
+            ));
+        }
+        let same_outcome = (ruby == "OK") == (rust == "OK");
+        let noted = row
+            .get("divergence")
+            .and_then(Value::as_str)
+            .is_some_and(|n| !n.is_empty());
+        if same_outcome && noted {
+            failures.push(format!("{name}: stale divergence note"));
+        }
+        if !same_outcome && !noted {
+            failures.push(format!(
+                "{name}: ruby {ruby} vs rust {rust} without divergence note"
+            ));
+        }
+        if let (Some(expected), Some(actual)) =
+            (row.get("ruby_checksum").and_then(Value::as_str), &checksum)
+        {
+            if expected != actual {
+                failures.push(format!("{name}: checksum {actual} != ruby {expected}"));
+            }
+        }
+    }
+    if let Some(path) = std::env::var_os("PARITY_DUMP") {
+        std::fs::write(path, serde_json::to_string_pretty(&dump).unwrap()).unwrap();
+        return;
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn v1_json(default: &str) -> String {
+    format!(
+        r#"{{"lml":1,"model":"Legacy","attributes":[{{"name":"amount","default":{default}}}],"mappings":{{}}}}"#
+    )
+}
+
+/// M3: a v1 JSON float is admitted only in the spelling every Ruby JSON
+/// generator prints, so the checksum is Ruby's. Expected digests were measured
+/// with `Lutaml::Model::Lml::Document.from_hash(h).checksum` (also pinned by the
+/// parity table); the refused spellings re-render differently in Ruby.
+#[test]
+fn v1_json_floats_keep_ruby_checksums_or_refuse() {
+    for good in [
+        "1.5",
+        "1.0",
+        "100.0",
+        "-0.0",
+        "0.0001",
+        "123.456",
+        "-1.25",
+        "999999999999999.9",
+    ] {
+        let snapshot = load(v1_json(good).as_bytes(), InputFormat::Json).unwrap();
+        assert!(
+            snapshot
+                .canonical_json()
+                .contains(&format!("\"default\":{good}")),
+            "{good}"
+        );
+    }
+    for bad in [
+        "1.50", "0.10", "1e2", "1E2", "1.5e0", "1e-5", "1.0e-5", "1e20", "1.0e+20", "1e15",
+        "1e999", "0.00001", "9.999e-5",
+    ] {
+        let error = load(v1_json(bad).as_bytes(), InputFormat::Json).expect_err(bad);
+        assert_eq!(error.reason, ErrorReason::UnsupportedType, "{bad}");
+        assert_eq!(error.location, "/attributes/0/default", "{bad}");
+        assert_eq!(error.format.as_deref(), Some("json"), "{bad}");
+        assert_eq!(error.attribute.as_deref(), Some("amount"), "{bad}");
+    }
+    // Ruby parses -0 as the integer 0, and keeps big integers exact.
+    let negative_zero = load(v1_json("-0").as_bytes(), InputFormat::Json).unwrap();
+    assert!(negative_zero.canonical_json().contains("\"default\":0}"));
+    load(
+        v1_json("123456789012345678901234567890").as_bytes(),
+        InputFormat::Json,
+    )
+    .unwrap();
+}
+
+/// L1: object-key and enum duplicate scans are linear, and a YAML integer
+/// scalar is never run through a quadratic BigInt parse.
+#[test]
+fn large_documents_load_in_bounded_time() {
+    use std::time::{Duration, Instant};
+    // Generous for an unoptimised, possibly loaded run: a quadratic scan of 160k
+    // entries takes minutes, a linear one a few seconds.
+    let limit = Duration::from_secs(20);
+    let within = |label: &str, limit: Duration, run: &dyn Fn()| {
+        let started = Instant::now();
+        run();
+        assert!(
+            started.elapsed() < limit,
+            "{label} took {:?}",
+            started.elapsed()
+        );
+    };
+    let n = 160_000;
+    let types: String = (0..n)
+        .map(|i| format!(r#""v{i}":{{"base":"string","facets":{{}}}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(
+        r#"{{"lml_bundle":1,"roots":[],"models":{{}},"value_types":{{{types}}},"capabilities":[]}}"#
+    );
+    within("160k JSON keys", limit, &|| {
+        load(json.as_bytes(), InputFormat::Json).unwrap();
+    });
+    let yaml = (0..n).fold(String::new(), |mut out, i| {
+        out.push_str(&format!("  v{i}: {{base: string, facets: {{}}}}\n"));
+        out
+    });
+    let yaml =
+        format!("lml_bundle: 1\nroots: []\nmodels: {{}}\ncapabilities: []\nvalue_types:\n{yaml}");
+    within("160k YAML keys", limit, &|| {
+        load(yaml.as_bytes(), InputFormat::Yaml).unwrap();
+    });
+    let values: Vec<String> = (0..n).map(|i| format!("\"e{i}\"")).collect();
+    let attr = format!(
+        r#"{{"lml":2,"model":"Foo","register":"default","attributes":[{{"name":"a","type":{{"kind":"builtin","name":"string"}},"values":[{}]}}]}}"#,
+        values.join(",")
+    );
+    within("160k enum values", limit, &|| {
+        load(attr.as_bytes(), InputFormat::Json).unwrap();
+    });
+    let duplicate = attr.replace("\"e7\"", "\"e8\"");
+    assert_eq!(
+        load(duplicate.as_bytes(), InputFormat::Json)
+            .unwrap_err()
+            .reason,
+        ErrorReason::InvalidDocument
+    );
+    let digits = "9".repeat(800_000);
+    let big = format!("lml: 1\nmodel: X\nattributes: [{{name: n, default: {digits}}}]\n");
+    within("800k-digit YAML integer", limit, &|| {
+        load(big.as_bytes(), InputFormat::Yaml).unwrap();
+    });
+    let hex = format!(
+        "lml: 1\nmodel: X\nattributes: [{{name: n, default: 0x{}}}]\n",
+        "f".repeat(5000)
+    );
+    within("oversized radix integer", limit, &|| {
+        assert_eq!(
+            load(hex.as_bytes(), InputFormat::Yaml).unwrap_err().reason,
+            ErrorReason::InvalidDocument
+        );
+    });
+}
+
+/// L3: YAML 1.2 floats need a digit; dot/sign/exponent fragments stay strings.
+#[test]
+fn yaml_plain_scalars_without_digits_are_strings() {
+    for text in [
+        ".", "-.", "+.", ".e5", "-.e5", ".E-3", "e5", "-e5", "1e", "1e+", "..", "1.2.3",
+    ] {
+        let yaml = format!("lml: 1\nmodel: X\nattributes: [{{name: n, default: {text}}}]\n");
+        let snapshot = load(yaml.as_bytes(), InputFormat::Yaml).unwrap();
+        assert_eq!(
+            snapshot.tree().get("attributes").unwrap().array().unwrap()[0].get("default"),
+            Some(&Node::String(text.to_string())),
+            "{text}"
+        );
+    }
+    // A genuine float is still a float, which a v1 YAML identity refuses.
+    for text in [".5", "5.", "-.5", "1e5", "5.e3"] {
+        let yaml = format!("lml: 1\nmodel: X\nattributes: [{{name: n, default: {text}}}]\n");
+        let error = load(yaml.as_bytes(), InputFormat::Yaml).unwrap_err();
+        assert_eq!(error.reason, ErrorReason::UnsupportedType, "{text}");
+    }
+}
+
+/// M2: `mappings.toml` validates like json/yaml; the typed view then refuses it
+/// by name rather than dropping it.
+#[test]
+fn toml_mapping_validates_and_the_typed_view_refuses_it_by_name() {
+    let mut v = bundle();
+    v["capabilities"] = json!(["json", "toml"]);
+    v["models"]["Example::Node@custom"]["mappings"]["toml"] =
+        json!({"rules":[{"key":["amount"],"to":"amount"}]});
+    let snapshot = parsed(&v);
+    let error = snapshot.bundle().unwrap_err();
+    assert_eq!(error.reason, ErrorReason::UnsupportedFormat);
+    assert_eq!(error.location, "/models/Example::Node@custom/mappings/toml");
+    assert_eq!(error.format.as_deref(), Some("toml"));
+    v["models"]["Example::Node@custom"]["mappings"]["toml"]["rules"][0]["to"] = json!("missing");
+    refused(
+        &v,
+        ErrorReason::DanglingReference,
+        "/models/Example::Node@custom/mappings/toml/rules/0/to",
+    );
+}
+
+/// Ruby review-R2 rules (attribute names, reserved members, nesting depth,
+/// mapping scalars, duplicate keys): 97 Ruby-generated cases with the expected
+/// reason and, where Ruby reports one, location (bundle text errors have none).
+#[test]
+fn ruby_r2_refusal_cases_match_ruby() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/r2_refusals.json")).unwrap();
+    assert_eq!(cases.len(), 97);
+    let mut failures = Vec::new();
+    for case in &cases {
+        let name = case["name"].as_str().unwrap();
+        let input = case["input"].as_str().unwrap().as_bytes();
+        match (load(input, InputFormat::Json), case["expect"].as_object()) {
+            (Ok(_), None) => {}
+            (Ok(_), Some(_)) => failures.push(format!("{name}: accepted, Ruby refuses")),
+            // Rust additionally type-checks defaults: the depth-99/100 controls put an array
+            // under a string attribute, so Rust refuses on the type, never on nesting.
+            (Err(e), None)
+                if name.starts_with("doc_depth_")
+                    && e.reason == ErrorReason::NonSerializableDefault => {}
+            (Err(e), None) => failures.push(format!(
+                "{name}: refused {:?} at {}, Ruby accepts",
+                e.reason, e.location
+            )),
+            (Err(e), Some(expect)) => {
+                let reason = serde_json::to_value(&e.reason).unwrap();
+                if reason != expect["reason"] {
+                    failures.push(format!("{name}: reason {reason} != {}", expect["reason"]));
+                }
+                if let Some(location) = expect["location"].as_str() {
+                    if e.location != location {
+                        failures.push(format!("{name}: location {} != {location}", e.location));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
