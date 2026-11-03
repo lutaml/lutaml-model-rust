@@ -1,5 +1,6 @@
 //! Deterministic artifacts with caller-pinned manifest identity.
 use crate::{codecs::RustJsonEmitter, contracts::*, generator::RustEmitter, lml::Snapshot};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
@@ -17,6 +18,18 @@ pub fn digest(bytes: &[u8]) -> String {
 }
 fn invalid(detail: &str) -> Box<dyn Error> {
     io::Error::new(io::ErrorKind::InvalidData, detail).into()
+}
+
+#[derive(Deserialize)]
+struct CorpusIndex {
+    corpus: u32,
+    generation: String,
+    cases: Vec<CorpusCase>,
+}
+#[derive(Deserialize)]
+struct CorpusCase {
+    id: String,
+    lml_checksum: String,
 }
 
 /// Generated files and their independently hashable canonical manifest.
@@ -82,6 +95,35 @@ impl Artifacts {
             }],
         };
         Ok(Self { files, manifest })
+    }
+    /// Pin an index's actual bytes and source identity, without claiming replay
+    /// or coverage of any indexed case. The digest must come from the caller.
+    pub fn with_corpus(mut self, bytes: &[u8], expected_digest: &str) -> ArtifactResult<Self> {
+        let actual_digest = digest(bytes);
+        if actual_digest != expected_digest {
+            return Err(invalid("corpus index checksum mismatch"));
+        }
+        let index: CorpusIndex = serde_json::from_slice(bytes)?;
+        if index.corpus != 1 {
+            return Err(invalid("unsupported corpus index version"));
+        }
+        if index.generation.trim().is_empty() || index.cases.is_empty() {
+            return Err(invalid("corpus generation and cases must be nonempty"));
+        }
+        let mut ids = BTreeSet::new();
+        for case in index.cases {
+            if case.id.trim().is_empty() || !ids.insert(case.id) {
+                return Err(invalid("corpus case IDs must be nonempty and unique"));
+            }
+            if case.lml_checksum != self.manifest.lml_checksum {
+                return Err(invalid("corpus case source checksum mismatch"));
+            }
+        }
+        self.manifest.corpora = vec![CorpusPin {
+            generation: index.generation,
+            sha256: actual_digest,
+        }];
+        Ok(self)
     }
     pub fn manifest_bytes(&self) -> ArtifactResult<Vec<u8>> {
         canonical_manifest(&self.manifest)

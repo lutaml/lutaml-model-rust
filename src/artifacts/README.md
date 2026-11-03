@@ -22,7 +22,15 @@ Manifest identity uses the original loaded LML wire checksum. Generator identity
 pins emitter source/runtime templates; the runtime dependency pin hashes this
 crate's Cargo.lock, shared contracts and exact-value implementation, in that order.
 Manifest capabilities describe generated JSON codecs; XML source declarations do not advertise an XML runtime.
-No corpus is implicitly claimed: the corpus list is empty for this CLI. Generated
+Add `--corpus-index index.json --corpus-sha256 sha256:EXPECTED` to generation
+and checking to pin an optional corpus index. Both options are required together;
+the SHA-256 covers the actual index bytes, including whitespace. Version 1,
+nonempty generation/cases, unique nonempty case IDs, and every case's original
+LML source checksum are verified before any artifact writes. The manifest records
+only generation and index digest. This proves index identity and source binding;
+it does not claim execution or coverage of indexed cases. Checking a corpus-pinned
+artifact requires the same explicit index and pin. Without these options no corpus
+is implicitly claimed and the corpus list is empty. Generated
 files and dependencies are sorted. The manifest digest is external and includes
 all canonical manifest fields. Artifact directories must not be modified
 concurrently during generation or verification.
