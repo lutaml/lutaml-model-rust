@@ -253,6 +253,25 @@ fn overrides() -> BTreeMap<&'static str, Value> {
 }
 
 #[test]
+fn wasm_replay_overrides_match_the_native_table() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wasm_xml/overrides.mjs"),
+    )
+    .unwrap();
+    let start = text.find("export const OVERRIDES = {").unwrap();
+    let block = &text[start..start + text[start..].find("\n};").unwrap()];
+    let wasm: std::collections::BTreeSet<&str> = block
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix('\'')?.split('\'').next())
+        .collect();
+    let native: std::collections::BTreeSet<&str> = overrides().keys().copied().collect();
+    assert_eq!(
+        wasm, native,
+        "tests/wasm_xml/overrides.mjs drifted from overrides()"
+    );
+}
+
+#[test]
 fn oracle_fixture_is_a_valid_bundle_and_projects() {
     let bundle = full_bundle();
     assert_eq!(oracle()["cases"].as_array().unwrap().len(), 32);

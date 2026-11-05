@@ -6,8 +6,6 @@ export const OVERRIDES = {
   'person-wrong-root': { error: 'invalid_document' },
   'person-wrong-namespace': { error: 'invalid_document' },
   'person-bad-integer': { error: 'invalid_document', attribute: 'age' },
-  // The generated union cannot hold an absent tag: the base case fills it in.
-  'kennel-poly-missing-kind': { pet: { kind: 'animal', name: 'Tom' }, owner: null },
   'kennel-poly-unknown-kind': { error: 'unknown_discriminator' },
 };
 
