@@ -692,6 +692,21 @@ fn emit_union(
         ));
     }
     let tag_key = quote(&d.attribute);
+    // The field's declared model: the case an absent tag reads as.
+    let base = bundle.models[id]
+        .attributes
+        .iter()
+        .find(|a| a.name == field)
+        .and_then(|a| {
+            a.reference.clone().or(match &a.value_type {
+                TypeRef::Model { id } => Some(id.clone()),
+                _ => None,
+            })
+        });
+    let base_index = d
+        .cases
+        .iter()
+        .position(|(_, target)| Some(target) == base.as_ref());
     writeln!(
         output,
         "#[allow(non_camel_case_types)]\n#[derive(Clone, Debug, PartialEq, Eq)]\npub enum {ty} {{"
@@ -702,23 +717,34 @@ fn emit_union(
     }
     output.push_str("}\n");
     writeln!(output, "impl Serialize for {ty} {{ fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{{ let (tag,payload)=match self {{").unwrap();
-    for (index, (tag, _, _)) in cases.iter().enumerate() {
+    for (index, (tag, _, declared)) in cases.iter().enumerate() {
+        // A declared member carries its own value: an absent tag stays absent (Ruby
+        // writes nil as no attribute). Only an undeclared case gets the tag added.
+        let tag_expr = if declared.is_some() {
+            "None::<&str>".to_string()
+        } else {
+            format!("Some({})", quote(tag))
+        };
         writeln!(
             output,
-            "Self::Case{index}(v) => ({}, serde_json::to_value(v)),",
-            quote(tag)
+            "Self::Case{index}(v) => ({tag_expr}, serde_json::to_value(v)),"
         )
         .unwrap();
     }
-    writeln!(output, "}}; let mut payload=match payload.map_err(serde::ser::Error::custom)? {{ serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom(\"discriminator payload must be an object\")) }}; payload.insert({tag_key}.into(),serde_json::Value::String(tag.into())); serde_json::Value::Object(payload).serialize(s) }} }}").unwrap();
-    writeln!(output, "impl<'de> Deserialize<'de> for {ty} {{ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{{ let mut payload=match serde_json::Value::deserialize(d)? {{ serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom(\"expected object\")) }}; let tag=match payload.get({tag_key}) {{ Some(serde_json::Value::String(t))=>t.clone(), _=>return Err(serde::de::Error::custom(\"missing discriminator\")) }}; match tag.as_str() {{").unwrap();
+    writeln!(output, "}}; let mut payload=match payload.map_err(serde::ser::Error::custom)? {{ serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom(\"discriminator payload must be an object\")) }}; if let Some(tag)=tag {{ payload.insert({tag_key}.into(),serde_json::Value::String(tag.into())); }} serde_json::Value::Object(payload).serialize(s) }} }}").unwrap();
+    writeln!(output, "impl<'de> Deserialize<'de> for {ty} {{ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{{ let mut payload=match serde_json::Value::deserialize(d)? {{ serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom(\"expected object\")) }}; let tag=match payload.get({tag_key}) {{ Some(serde_json::Value::String(t))=>Some(t.clone()), None=>None, _=>return Err(serde::de::Error::custom(\"missing discriminator\")) }}; match tag.as_deref() {{").unwrap();
     for (index, (tag, _, declared)) in cases.iter().enumerate() {
         let strip = if declared.is_some() {
             ""
         } else {
             &format!("payload.remove({tag_key}); ")
         };
-        writeln!(output, "{} => {{ {strip}Ok(Self::Case{index}(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) }},", quote(tag)).unwrap();
+        writeln!(output, "Some({}) => {{ {strip}Ok(Self::Case{index}(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) }},", quote(tag)).unwrap();
+    }
+    // An absent tag reads as the base case, matching the XML reader and Ruby.
+    match base_index {
+        Some(index) => writeln!(output, "None => {{ Ok(Self::Case{index}(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) }},").unwrap(),
+        None => output.push_str("None => Err(serde::de::Error::custom(\"missing discriminator\")),\n"),
     }
     output.push_str("_ => Err(serde::de::Error::custom(\"unknown discriminator\")), } } }\n");
     writeln!(

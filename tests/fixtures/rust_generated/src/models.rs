@@ -154,12 +154,13 @@ Case0(Box<Leaf>),
 Case1(Box<Node>),
 }
 impl Serialize for Node_item_Union { fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{ let (tag,payload)=match self {
-Self::Case0(v) => ("leaf", serde_json::to_value(v)),
-Self::Case1(v) => ("node", serde_json::to_value(v)),
-}; let mut payload=match payload.map_err(serde::ser::Error::custom)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom("discriminator payload must be an object")) }; payload.insert("kind".into(),serde_json::Value::String(tag.into())); serde_json::Value::Object(payload).serialize(s) } }
-impl<'de> Deserialize<'de> for Node_item_Union { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ let mut payload=match serde_json::Value::deserialize(d)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom("expected object")) }; let tag=match payload.get("kind") { Some(serde_json::Value::String(t))=>t.clone(), _=>return Err(serde::de::Error::custom("missing discriminator")) }; match tag.as_str() {
-"leaf" => { Ok(Self::Case0(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
-"node" => { payload.remove("kind"); Ok(Self::Case1(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+Self::Case0(v) => (None::<&str>, serde_json::to_value(v)),
+Self::Case1(v) => (Some("node"), serde_json::to_value(v)),
+}; let mut payload=match payload.map_err(serde::ser::Error::custom)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom("discriminator payload must be an object")) }; if let Some(tag)=tag { payload.insert("kind".into(),serde_json::Value::String(tag.into())); } serde_json::Value::Object(payload).serialize(s) } }
+impl<'de> Deserialize<'de> for Node_item_Union { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ let mut payload=match serde_json::Value::deserialize(d)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom("expected object")) }; let tag=match payload.get("kind") { Some(serde_json::Value::String(t))=>Some(t.clone()), None=>None, _=>return Err(serde::de::Error::custom("missing discriminator")) }; match tag.as_deref() {
+Some("leaf") => { Ok(Self::Case0(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+Some("node") => { payload.remove("kind"); Ok(Self::Case1(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+None => { Ok(Self::Case0(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
 _ => Err(serde::de::Error::custom("unknown discriminator")), } } }
 impl Node_item_Union { pub fn validate(&self)->Result<(),ValidationError>{ match self {
 Self::Case0(v) => { v.validate()?; if let Presence::Value(t)=&v.kind { if t!="leaf" { return Err(invalid("Node@default", "item", "unknown_discriminator")); } } Ok(()) },

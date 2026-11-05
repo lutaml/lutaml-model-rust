@@ -245,11 +245,6 @@ fn overrides() -> BTreeMap<&'static str, Value> {
             "person-bad-integer",
             json!({"error": "invalid_document", "attribute": "age"}),
         ),
-        // The generated union cannot hold an absent tag: the base case fills it in.
-        (
-            "kennel-poly-missing-kind",
-            json!({"pet": {"kind": "animal", "name": "Tom"}, "owner": null}),
-        ),
         (
             "kennel-poly-unknown-kind",
             json!({"error": "unknown_discriminator"}),
@@ -291,6 +286,26 @@ fn emitter_output_is_deterministic_and_single_file() {
         );
     }
     assert!(!text.contains("unsafe") && !text.contains("eval"));
+}
+
+/// Ruby (wave1 worktree, `bundle exec ruby`) reads `<pet><name>Tom</name></pet>` as
+/// the base class with `kind` nil, and writes it back with no kind attribute and no
+/// kind member. The generated union must not invent the base tag on the way out.
+#[test]
+fn absent_polymorphic_tag_reads_the_base_case_with_no_tag_like_ruby() {
+    let bundle = full_bundle();
+    let kennel = "XmlOracle::Kennel@default";
+    let read_back = read(kennel, "<kennel><pet><name>Tom</name></pet></kennel>");
+    assert_eq!(
+        dump(&bundle, kennel, ok(&read_back)),
+        json!({"pet": {"kind": null, "name": "Tom"}, "owner": null})
+    );
+    let written = write(kennel, ok(&read_back));
+    let text = ok(&written).as_str().unwrap();
+    assert_eq!(
+        text.split_whitespace().collect::<String>(),
+        "<kennel><pet><name>Tom</name></pet></kennel>"
+    );
 }
 
 #[test]
@@ -340,8 +355,7 @@ fn writer_round_trips_every_ruby_read_value() {
         .iter()
         .filter(|c| {
             let id = c["id"].as_str().unwrap();
-            c.get("expected_data").is_some()
-                && (id == "kennel-poly-missing-kind" || !over.contains_key(id))
+            c.get("expected_data").is_some() && !over.contains_key(id)
         })
         .collect();
     let reads = run(eligible
@@ -362,9 +376,6 @@ fn writer_round_trips_every_ruby_read_value() {
     for ((c, text), r) in eligible.iter().zip(&texts).zip(&back) {
         let id = c["id"].as_str().unwrap();
         let mut expected = c["expected_data"].clone();
-        if id == "kennel-poly-missing-kind" {
-            expected = over[id].clone();
-        }
         if c["model_id"] == PERSON {
             // An empty attribute is omitted; as_nil/as_blank write an empty element that reads back "".
             for m in ["id", "lang"] {

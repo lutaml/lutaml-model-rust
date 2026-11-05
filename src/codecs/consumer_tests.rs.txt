@@ -34,7 +34,7 @@ use serde_json::json;
 #[test] fn nested_models_and_discriminators_use_wire_aliases() {
  let model=read_Record_json(r#"{"child":{"old_name":"nested"},"selected":{"kind":"item","wire_name":"selected"}}"#).unwrap();let output=serde_json::from_str::<serde_json::Value>(&write_Record_json(&model).unwrap()).unwrap();assert_eq!(output,json!({"child":{"wire_name":"nested"},"selected":{"kind":"item","wire_name":"selected"}}));
  let err=read_Record_json(r#"{"selected":{"kind":"unknown"}}"#).unwrap_err();assert_eq!(err.reason,super::contracts::ErrorReason::UnknownDiscriminator);
- assert_eq!(read_Record_json(r#"{"selected":{}}"#).unwrap_err().reason,super::contracts::ErrorReason::UnknownDiscriminator);
+ let bare=read_Record_json(r#"{"selected":{}}"#).unwrap();assert_eq!(serde_json::from_str::<serde_json::Value>(&write_Record_json(&bare).unwrap()).unwrap(),json!({"selected":{"kind":"item"}}),"missing tag reads as the base type, like Ruby; Item has no kind member, so the base tag is written");
 }
 #[test] fn root_keyed_collection_preserves_remaining_wire_mappings() {
  let wire=r#"{"first":{"wire_name":"a","price":"2.00"},"second":{"wire_name":"b"}}"#;let model=read_Root_json(wire).unwrap();let output=write_Root_json(&model).unwrap();assert_eq!(serde_json::from_str::<serde_json::Value>(&output).unwrap(),serde_json::from_str::<serde_json::Value>(wire).unwrap());

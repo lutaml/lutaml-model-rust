@@ -230,14 +230,19 @@ fn transformed(
     let direction = if encode { "encode" } else { "decode" };
     // The local `v` is one typed member value, never stored on a generated model.
     if let Some(d) = &a.discriminator {
-        writeln!(out,"let mut payload=object(v,{})?; let tag=payload.remove({}).and_then(|v|v.as_str().map(str::to_owned)).ok_or_else(||failure(ErrorReason::UnknownDiscriminator,{}, {}, \"/input\", \"missing discriminator\"))?; let payload=Value::Object(payload); v=match tag.as_str() {{",q(id),q(&d.attribute),q(id),q(&a.name)).unwrap();
+        // A missing tag reads (and writes) as the declared base type, with the
+        // tag left absent: Ruby and the TS target do the same.
+        let base = target(a)
+            .and_then(|t| names.get(t))
+            .ok_or_else(|| fail(id, &a.name, "unknown discriminator base"))?;
+        writeln!(out,"let mut payload=object(v,{})?; let tag=match payload.remove({}) {{ None=>None, Some(t)=>Some(t.as_str().map(str::to_owned).ok_or_else(||failure(ErrorReason::UnknownDiscriminator,{}, {}, \"/input\", \"non-string discriminator\"))?) }}; let payload=Value::Object(payload); match tag {{ None=>{{ v={direction}_{base}(payload)?; }} Some(tag)=>{{ v=match tag.as_str() {{",q(id),q(&d.attribute),q(id),q(&a.name)).unwrap();
         for (tag, target) in &d.cases {
             let name = names
                 .get(target)
                 .ok_or_else(|| fail(id, &a.name, "unknown discriminator target"))?;
             writeln!(out, "{} => {direction}_{name}(payload)?,", q(tag)).unwrap();
         }
-        writeln!(out,"_=>return Err(failure(ErrorReason::UnknownDiscriminator,{}, {}, \"/input\", \"unknown discriminator\")), }}; v.as_object_mut().ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/input\", \"invalid discriminator payload\"))?.insert({}.into(),Value::String(tag));",q(id),q(&a.name),q(id),q(&a.name),q(&d.attribute)).unwrap();
+        writeln!(out,"_=>return Err(failure(ErrorReason::UnknownDiscriminator,{}, {}, \"/input\", \"unknown discriminator\")), }}; v.as_object_mut().ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/input\", \"invalid discriminator payload\"))?.insert({}.into(),Value::String(tag)); }} }}",q(id),q(&a.name),q(id),q(&a.name),q(&d.attribute)).unwrap();
     } else if let Some(target) = target(a) {
         let name = names
             .get(target)

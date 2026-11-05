@@ -500,7 +500,11 @@ fn main() {
  assert!(matches!(&animals[1],LmlImportFixtures_Kennel_animals_Union::Case0(a) if a.kind==Presence::Value("animal".to_string())));
  let written=write_LmlImportFixtures_Kennel_json(&kennel).unwrap();
  assert_eq!(serde_json::from_str::<serde_json::Value>(&written).unwrap(),serde_json::from_str::<serde_json::Value>(wire).unwrap());
- for bad in [r#"{"animals":[{"kind":"cat"}]}"#,r#"{"animals":[{"name":"n"}]}"#] {
+ let bare=read_LmlImportFixtures_Kennel_json(r#"{"animals":[{"name":"n"}]}"#).unwrap();
+ let Presence::Value(bare_animals)=&bare.animals else { panic!("bare animals") };
+ assert!(matches!(&bare_animals[0],LmlImportFixtures_Kennel_animals_Union::Case0(a) if a.kind==Presence::Absent),"missing tag reads as the base type, like Ruby");
+ assert_eq!(serde_json::from_str::<serde_json::Value>(&write_LmlImportFixtures_Kennel_json(&bare).unwrap()).unwrap(),serde_json::json!({"animals":[{"name":"n"}]}));
+ for bad in [r#"{"animals":[{"kind":"cat"}]}"#,r#"{"animals":[{"kind":7}]}"#] {
   let error=read_LmlImportFixtures_Kennel_json(bad).unwrap_err();
   assert_eq!(error.reason,lutaml_model::contracts::ErrorReason::UnknownDiscriminator,"{bad}");
  }
