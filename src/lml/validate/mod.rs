@@ -24,7 +24,21 @@ const BUILTINS: &[&str] = &[
     "hex_binary",
     "symbol",
     "hash",
+    "email_address",
+    "ip_v4_address",
+    "ip_v6_address",
+    "uuid",
+    "reference",
+    "uri_reference",
+    "date_with_timezone",
+    "date_time_with_timezone",
+    "day_time_duration",
+    "year_month_duration",
+    "positive_integer",
+    "non_negative_integer",
 ];
+pub(super) const INTEGER_BUILTINS: &[&str] =
+    &["integer", "positive_integer", "non_negative_integer"];
 const MAX_INTEGER: u64 = 9_007_199_254_740_991;
 mod defaults;
 mod graph;

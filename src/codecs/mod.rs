@@ -250,7 +250,7 @@ fn transformed(
         writeln!(out, "v={direction}_{name}(v)?;").unwrap();
     } else if let TypeRef::Builtin { name } = &a.value_type {
         let exact = match name {
-            BuiltinType::Integer => Some("ExactInteger"),
+            t if t.is_integer() => Some("ExactInteger"),
             BuiltinType::Decimal | BuiltinType::Rational => Some("ExactDecimal"),
             BuiltinType::Float => Some("PortableFloat"),
             _ => None,
@@ -274,6 +274,8 @@ fn member(
             a.value_type,
             TypeRef::Builtin {
                 name: BuiltinType::Integer
+                    | BuiltinType::PositiveInteger
+                    | BuiltinType::NonNegativeInteger
                     | BuiltinType::Decimal
                     | BuiltinType::Rational
                     | BuiltinType::Float

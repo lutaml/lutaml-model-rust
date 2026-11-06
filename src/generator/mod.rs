@@ -253,9 +253,11 @@ pub fn effective_discriminators(bundle: &Bundle) -> ContractResult<Bundle> {
 }
 fn builtin(t: &BuiltinType, id: &str, field: &str) -> ContractResult<String> {
     Ok(match t {
-        BuiltinType::String | BuiltinType::Token | BuiltinType::Symbol => "String",
+        BuiltinType::String | BuiltinType::Token | BuiltinType::Symbol | BuiltinType::Reference => {
+            "String"
+        }
         BuiltinType::Boolean => "bool",
-        BuiltinType::Integer => "ExactInteger",
+        t if t.is_integer() => "ExactInteger",
         BuiltinType::Decimal | BuiltinType::Rational => "ExactDecimal",
         BuiltinType::Float => "PortableFloat",
         BuiltinType::Qname => "QName",
@@ -340,12 +342,7 @@ impl ModelEmitter for RustEmitter {
         let mut output = include_str!("runtime.rs.txt").to_owned();
         if bundle.models.values().flat_map(|m| &m.attributes).any(|a| {
             a.enumeration.is_some()
-                && matches!(
-                    a.value_type,
-                    TypeRef::Builtin {
-                        name: BuiltinType::Integer
-                    }
-                )
+                && matches!(&a.value_type, TypeRef::Builtin { name } if name.is_integer())
         }) {
             output.push_str("fn same_integer(a:&ExactInteger,b:&ExactInteger)->bool { fn parts(s:&str)->(bool,&str) { let negative=s.starts_with('-'); let digits=s.trim_start_matches(['-','+']).trim_start_matches('0'); (negative&&!digits.is_empty(),digits) } parts(a.as_str())==parts(b.as_str()) }\n");
         }
@@ -506,12 +503,7 @@ impl ModelEmitter for RustEmitter {
                     writeln!(output,"impl<'de> Deserialize<'de> for {en} {{ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{{ let v={ty}::deserialize(d)?;").unwrap();
                     for (index, v) in values.iter().enumerate() {
                         let literal = quote(&serde_json::to_string(&enum_literal(a, v)).unwrap());
-                        if matches!(
-                            a.value_type,
-                            TypeRef::Builtin {
-                                name: BuiltinType::Integer
-                            }
-                        ) {
+                        if matches!(&a.value_type, TypeRef::Builtin { name } if name.is_integer()) {
                             writeln!(output,"if same_integer(&v,&serde_json::from_str::<{ty}>({literal}).map_err(serde::de::Error::custom)?) {{ return Ok(Self::Case{index}); }}").unwrap();
                         } else {
                             writeln!(output,"if v == serde_json::from_str::<{ty}>({literal}).map_err(serde::de::Error::custom)? {{ return Ok(Self::Case{index}); }}").unwrap();
@@ -765,12 +757,7 @@ fn emit_union(
 fn same_enum_literal(a: &Attribute, left: &NeutralValue, right: &NeutralValue) -> bool {
     let left = enum_literal(a, left);
     let right = enum_literal(a, right);
-    if matches!(
-        a.value_type,
-        TypeRef::Builtin {
-            name: BuiltinType::Integer
-        }
-    ) {
+    if matches!(&a.value_type, TypeRef::Builtin { name } if name.is_integer()) {
         if let (NeutralValue::String(left), NeutralValue::String(right)) = (&left, &right) {
             return matches!((left.parse::<num_bigint::BigInt>(),right.parse::<num_bigint::BigInt>()),(Ok(left),Ok(right))if left==right);
         }
@@ -789,12 +776,7 @@ pub(crate) fn wire_default(a: &Attribute, value: &NeutralValue) -> NeutralValue 
     }
 }
 fn enum_literal(a: &Attribute, value: &NeutralValue) -> NeutralValue {
-    if matches!(
-        a.value_type,
-        TypeRef::Builtin {
-            name: BuiltinType::Integer
-        }
-    ) {
+    if matches!(&a.value_type, TypeRef::Builtin { name } if name.is_integer()) {
         match value {
             NeutralValue::Signed(v) => return NeutralValue::String(v.to_string()),
             NeutralValue::Unsigned(v) => return NeutralValue::String(v.to_string()),
@@ -822,21 +804,15 @@ fn validate_literal(
             },
             NeutralValue::String(_),
         ) => true,
-        (
-            TypeRef::Builtin {
-                name: BuiltinType::Integer,
-            },
-            NeutralValue::String(s),
-        ) => {
+        (TypeRef::Builtin { name }, NeutralValue::String(s)) if name.is_integer() => {
             let d = s.strip_prefix('-').unwrap_or(s);
             !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit())
         }
-        (
-            TypeRef::Builtin {
-                name: BuiltinType::Integer,
-            },
-            NeutralValue::Signed(_) | NeutralValue::Unsigned(_),
-        ) => true,
+        (TypeRef::Builtin { name }, NeutralValue::Signed(_) | NeutralValue::Unsigned(_))
+            if name.is_integer() =>
+        {
+            true
+        }
         (
             TypeRef::Builtin {
                 name: BuiltinType::Decimal | BuiltinType::Rational,
