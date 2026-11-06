@@ -461,7 +461,14 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
         }
         if rule.kind != XmlRuleKind::Content {
             for (i, alias) in aliases.iter().enumerate() {
-                xml_name(id, alias, &format!("{location}/name/{i}"))?;
+                // The `xml` prefix is bound by the XML namespaces spec itself,
+                // so an attribute may be spelled `xml:lang` with no declaration.
+                let local = if rule.kind == XmlRuleKind::Attribute {
+                    alias.strip_prefix("xml:").unwrap_or(alias)
+                } else {
+                    alias
+                };
+                xml_name(id, local, &format!("{location}/name/{i}"))?;
             }
         }
         if let Some(prefix) = rule.prefix.as_ref().filter(|p| !p.is_empty()) {

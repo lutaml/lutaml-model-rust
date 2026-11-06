@@ -73,3 +73,20 @@ fn ncname_follows_xml_1_0_fifth_edition_ranges() {
         assert!(!accepts(bad), "{bad:?} should be refused");
     }
 }
+
+fn rule_name_accepted(kind_index: usize, name: &str) -> bool {
+    let mut v = fixture();
+    v["models"][ID]["mappings"]["xml"]["rules"][kind_index]["name"] = json!([name]);
+    compile_projection(&bundle(v), ID).is_ok()
+}
+
+#[test]
+fn attributes_may_use_the_predeclared_xml_prefix() {
+    // rule 0 is an attribute, rule 1 an element
+    assert!(rule_name_accepted(0, "xml:lang"));
+    assert!(rule_name_accepted(0, "xml:space"));
+    assert!(!rule_name_accepted(0, "xml:"));
+    assert!(!rule_name_accepted(0, "xmlx:lang"));
+    assert!(!rule_name_accepted(0, "a:b"));
+    assert!(!rule_name_accepted(1, "xml:lang"));
+}
