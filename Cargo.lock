@@ -153,7 +153,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "moxml"
 version = "0.1.0"
-source = "git+https://github.com/lutaml/moxml-rs?rev=d059b1f2c195de922926d8330251268d9a56d955#d059b1f2c195de922926d8330251268d9a56d955"
+source = "git+https://github.com/lutaml/moxml-rs?rev=93689831f44aa5860d0921541841c734560e1c27#93689831f44aa5860d0921541841c734560e1c27"
 dependencies = [
  "regex",
  "wasm-bindgen",
