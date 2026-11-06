@@ -78,6 +78,12 @@ fn actual_cli_generates_deterministic_pinned_artifacts_and_checks_corruption() {
     assert_eq!(fs::read(out.join("manifest.json")).unwrap(), manifest);
     assert!(invoke("check", &input, &out, Some(pin)).status.success());
     assert!(!invoke("check", &input, &out, None).status.success());
+    // An extra unpinned file next to the pinned set fails `check` and is named.
+    fs::write(out.join("extra.rs"), "// stray").unwrap();
+    let stray = invoke("check", &input, &out, Some(pin));
+    assert!(!stray.status.success());
+    assert!(String::from_utf8_lossy(&stray.stderr).contains("extra.rs"));
+    fs::remove_file(out.join("extra.rs")).unwrap();
     assert!(!invoke("check", &input, &out, Some("sha256:wrong"))
         .status
         .success());
@@ -206,9 +212,17 @@ fn manifest_reports_generated_capabilities_instead_of_source_formats() {
         json!({"root":{"element":"book"},"namespace":{"mode":"inherit"},"rules":[]});
     let snapshot = lml::load(&serde_json::to_vec(&input).unwrap(), InputFormat::Json).unwrap();
     let artifacts = Artifacts::generate(&snapshot).unwrap();
-    assert_eq!(artifacts.manifest.capabilities, vec!["json"]);
+    assert_eq!(artifacts.manifest.capabilities[0], "json");
     assert_eq!(artifacts.manifest.lml_checksum, snapshot.checksum());
-    assert!(!artifacts.files.contains_key("xml_codecs.rs"));
+    // The XML codecs exist only where this build has them (feature `xml`).
+    assert_eq!(
+        artifacts.files.contains_key("xml_codecs.rs"),
+        cfg!(feature = "xml")
+    );
+    assert_eq!(
+        artifacts.manifest.capabilities.contains(&"xml".to_string()),
+        cfg!(feature = "xml")
+    );
 }
 
 fn invoke_corpus(
@@ -453,10 +467,16 @@ fn invalid_corpus_inputs_fail_before_artifact_writes() {
     assert!(!out.exists());
 }
 
+/// The generated crate needs the `xml` runtime exactly when the CLI emitted xml_codecs.rs.
+const CONSUMER_FEATURES: &str = if cfg!(feature = "xml") {
+    r#""runtime","xml""#
+} else {
+    r#""runtime""#
+};
 fn cargo_consumer(temp: &Temp, name: &str, main: &str) -> Output {
     let src = temp.0.join("src");
     let path = serde_json::to_string(env!("CARGO_MANIFEST_DIR")).unwrap();
-    fs::write(temp.0.join("Cargo.toml"),format!("[package]\nname=\"{name}\"\nversion=\"0.0.0\"\nedition=\"2021\"\n[dependencies]\nlutaml-model={{path={path},default-features=false,features=[\"runtime\"]}}\nserde={{version=\"=1.0.219\",features=[\"derive\"]}}\nserde_json={{version=\"=1.0.140\",features=[\"arbitrary_precision\"]}}\n")).unwrap();
+    fs::write(temp.0.join("Cargo.toml"),format!("[package]\nname=\"{name}\"\nversion=\"0.0.0\"\nedition=\"2021\"\n[dependencies]\nlutaml-model={{path={path},default-features=false,features=[{CONSUMER_FEATURES}]}}\nserde={{version=\"=1.0.219\",features=[\"derive\"]}}\nserde_json={{version=\"=1.0.140\",features=[\"arbitrary_precision\"]}}\n")).unwrap();
     fs::write(src.join("main.rs"), main).unwrap();
     Command::new(env!("CARGO"))
         .args(["run", "--offline", "--quiet"])

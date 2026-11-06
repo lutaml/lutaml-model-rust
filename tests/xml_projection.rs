@@ -435,3 +435,27 @@ fn unsupported_new_xml_rule_metadata_is_retained_then_refused_by_projection() {
         ErrorReason::UnsupportedMapping
     );
 }
+
+#[test]
+fn invalid_xml_names_are_refused_at_generate_time_with_the_location() {
+    type Edit = fn(&mut Value);
+    let edits: [(&str, Edit); 4] = [
+        ("/root/element", |v| v["root"]["element"] = json!("n:r\"#")),
+        ("/rules/0/name/1", |v| {
+            v["rules"][0]["name"] = json!(["id", "a*/b"])
+        }),
+        ("/rules/1/prefix", |v| {
+            v["rules"][1]["prefix"] = json!("1bad")
+        }),
+        ("/namespace/prefix", |v| {
+            v["namespace"]["prefix"] = json!("a b")
+        }),
+    ];
+    for (suffix, edit) in edits {
+        let mut v = fixture();
+        edit(&mut v["models"][ID]["mappings"]["xml"]);
+        let e = compile_projection(&bundle(v), ID).unwrap_err();
+        assert_eq!(e.reason, ErrorReason::UnsupportedMapping, "{suffix}");
+        assert!(e.location.ends_with(suffix), "{suffix}: {}", e.location);
+    }
+}
