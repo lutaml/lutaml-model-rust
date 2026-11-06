@@ -20,7 +20,7 @@ pub struct QName { pub namespace: String, pub local: String }
 #[serde(transparent)]
 pub struct ExactInteger(String);
 impl ExactInteger {
- pub fn parse(s: &str) -> Result<Self, &'static str> { let digits=s.strip_prefix('-').unwrap_or(s); if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) { Err("invalid integer") } else { Ok(Self(s.into())) } }
+ pub fn parse(s: &str) -> Result<Self, &'static str> { let digits=s.strip_prefix(['-','+']).unwrap_or(s); if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) { Err("invalid integer") } else { Ok(Self(s.into())) } }
  pub fn as_str(&self)->&str { &self.0 }
 }
 impl<'de> Deserialize<'de> for ExactInteger { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
@@ -28,19 +28,85 @@ impl<'de> Deserialize<'de> for ExactInteger { fn deserialize<D:serde::Deserializ
 #[serde(transparent)]
 pub struct ExactDecimal(String);
 impl ExactDecimal {
- pub fn parse(s: &str) -> Result<Self, &'static str> { let digits=s.strip_prefix('-').unwrap_or(s); let mut parts=digits.split('.'); let whole=parts.next().unwrap_or(""); let fraction=parts.next(); if whole.is_empty() || !whole.bytes().all(|c|c.is_ascii_digit()) || parts.next().is_some() || fraction.is_some_and(|f| f.is_empty() || !f.bytes().all(|c|c.is_ascii_digit())) { Err("invalid decimal") } else { Ok(Self(s.into())) } }
+ pub fn parse(s: &str) -> Result<Self, &'static str> { let unsigned=s.strip_prefix(['-','+']).unwrap_or(s); let (whole,fraction)=unsigned.split_once('.').unwrap_or((unsigned,"")); let digits=|p:&str| p.bytes().all(|c|c.is_ascii_digit()); if (whole.is_empty() && fraction.is_empty()) || !digits(whole) || !digits(fraction) { Err("invalid decimal") } else { Ok(Self(s.into())) } }
  pub fn as_str(&self)->&str { &self.0 }
 }
 impl<'de> Deserialize<'de> for ExactDecimal { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StringHash(Vec<(String, String)>);
+impl StringHash {
+ pub fn from_pairs(pairs: Vec<(String, String)>) -> Self { let mut out: Vec<(String, String)> = Vec::new(); for (k, v) in pairs { match out.iter_mut().find(|e| e.0 == k) { Some(e) => e.1 = v, None => out.push((k, v)) } } Self(out) }
+ pub fn pairs(&self) -> &[(String, String)] { &self.0 }
+ pub fn get(&self, key: &str) -> Option<&str> { self.0.iter().find(|e| e.0 == key).map(|e| e.1.as_str()) }
+ pub fn len(&self) -> usize { self.0.len() }
+ pub fn is_empty(&self) -> bool { self.0.is_empty() }
+}
+impl Serialize for StringHash { fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok,S::Error> { s.collect_map(self.0.iter().map(|(k, v)| (k, v))) } }
+impl<'de> Deserialize<'de> for StringHash {
+ fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{
+  struct V;
+  impl<'de> serde::de::Visitor<'de> for V { type Value=StringHash; fn expecting(&self,f:&mut std::fmt::Formatter)->std::fmt::Result{ f.write_str("an object of string values") } fn visit_map<A:serde::de::MapAccess<'de>>(self,mut m:A)->Result<StringHash,A::Error>{ let mut v=Vec::new(); while let Some(e)=m.next_entry::<String,String>()? { v.push(e); } Ok(StringHash::from_pairs(v)) } }
+  d.deserialize_map(V)
+ }
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PortableFloat(f64);
+impl Eq for PortableFloat {}
+impl PortableFloat {
+ pub fn new(v: f64) -> Result<Self, &'static str> { if v.is_finite() { Ok(Self(v)) } else { Err("non-finite float") } }
+ pub fn get(&self)->f64 { self.0 }
+ pub fn to_wire(self)->String {
+  let x=self.0; if x==0.0 { return if x.is_sign_negative() {"-0.0".into()} else {"0.0".into()}; }
+  let sci=format!("{:e}",x.abs()); let (m,e)=sci.split_once('e').unwrap(); let digits:String=m.chars().filter(|c|*c!='.').collect();
+  let decpt=e.parse::<i32>().unwrap()+1; let sign=if x<0.0 {"-"} else {""};
+  if decpt>-4 && decpt<=15 {
+   if decpt<=0 { format!("{sign}0.{}{digits}","0".repeat(decpt.unsigned_abs() as usize)) }
+   else if decpt as usize>=digits.len() { format!("{sign}{digits}{}.0","0".repeat(decpt as usize-digits.len())) }
+   else { format!("{sign}{}.{}",&digits[..decpt as usize],&digits[decpt as usize..]) }
+  } else { let f=if digits.len()>1 {&digits[1..]} else {"0"}; format!("{sign}{}.{f}e{}",&digits[..1],decpt-1) }
+ }
+ pub fn parse(s: &str) -> Result<Self, &'static str> {
+  let u=s.strip_prefix('-').unwrap_or(s); let (n,x)=match u.split_once('e') { Some((n,x))=>(n,Some(x)), None=>(u,None) };
+  let d=|p:&str| !p.is_empty() && p.bytes().all(|c|c.is_ascii_digit());
+  let ok=match n.split_once('.') { Some((w,f))=>d(w)&&d(f), None=>false } && x.is_none_or(|x|d(x.strip_prefix('-').unwrap_or(x)));
+  if !ok { return Err("invalid float"); }
+  match s.parse::<f64>() { Ok(v) if v.is_finite() => { let r=Self(v); if r.to_wire()==s { Ok(r) } else { Err("float is not canonical") } } _ => Err("invalid float") }
+ }
+}
+impl Serialize for PortableFloat { fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{ s.serialize_str(&self.to_wire()) } }
+impl<'de> Deserialize<'de> for PortableFloat { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ Self::parse(&String::deserialize(d)?).map_err(serde::de::Error::custom) } }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum TextSource { Member { attribute: String, index: u64 }, Literal { literal: String } }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContentToken {
  Element { attribute: String, index: u64 },
  Text { #[serde(flatten)] source: TextSource },
  Cdata { #[serde(flatten)] source: TextSource },
+}
+// serde cannot combine deny_unknown_fields with flatten, so tokens are read
+// through one closed wire shape and then checked against the token kind.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContentTokenWire { kind: String, attribute: Option<String>, index: Option<u64>, literal: Option<String> }
+impl<'de> Deserialize<'de> for ContentToken {
+ fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+  let w = ContentTokenWire::deserialize(d)?;
+  let bad = |m: &str| serde::de::Error::custom(m);
+  let source = match (w.attribute, w.index, w.literal) {
+   (Some(attribute), Some(index), None) => TextSource::Member { attribute, index },
+   (None, None, Some(literal)) => TextSource::Literal { literal },
+   _ => return Err(bad("content token needs exactly one of attribute+index or literal")),
+  };
+  match (w.kind.as_str(), source) {
+   ("element", TextSource::Member { attribute, index }) => Ok(Self::Element { attribute, index }),
+   ("element", _) => Err(bad("element token needs attribute and index only")),
+   ("text", source) => Ok(Self::Text { source }),
+   ("cdata", source) => Ok(Self::Cdata { source }),
+   _ => Err(bad("unknown content token kind")),
+  }
+ }
 }
 impl ContentToken {
  pub fn reference(&self) -> Option<(&str,u64)> { match self {
@@ -54,9 +120,12 @@ impl ContentToken {
 pub struct Leaf {
 #[serde(rename = "text", default, skip_serializing_if = "Presence::is_absent")]
 pub text: Presence<String>,
+#[serde(rename = "kind", default, skip_serializing_if = "Presence::is_absent")]
+pub kind: Presence<String>,
 }
 impl Default for Leaf { fn default()->Self { Self {
 text: Presence::Absent,
+kind: Presence::Absent,
 } } }
 impl Leaf {
 pub fn apply_defaults(&mut self)->Result<(),ValidationError>{
@@ -79,15 +148,23 @@ if v == serde_json::from_str::<bool>("false").map_err(serde::de::Error::custom)?
 if v == serde_json::from_str::<bool>("true").map_err(serde::de::Error::custom)? { return Ok(Self::Case1); }
 Err(serde::de::Error::custom("invalid enum value")) } }
 #[allow(non_camel_case_types)]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Node_item_Union {
-#[serde(rename = "leaf")] Case0(Box<Leaf>),
-#[serde(rename = "node")] Case1(Box<Node>),
+Case0(Box<Leaf>),
+Case1(Box<Node>),
 }
+impl Serialize for Node_item_Union { fn serialize<S:serde::Serializer>(&self,s:S)->Result<S::Ok,S::Error>{ let (tag,payload)=match self {
+Self::Case0(v) => (None::<&str>, serde_json::to_value(v)),
+Self::Case1(v) => (Some("node"), serde_json::to_value(v)),
+}; let mut payload=match payload.map_err(serde::ser::Error::custom)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::ser::Error::custom("discriminator payload must be an object")) }; if let Some(tag)=tag { payload.insert("kind".into(),serde_json::Value::String(tag.into())); } serde_json::Value::Object(payload).serialize(s) } }
+impl<'de> Deserialize<'de> for Node_item_Union { fn deserialize<D:serde::Deserializer<'de>>(d:D)->Result<Self,D::Error>{ let mut payload=match serde_json::Value::deserialize(d)? { serde_json::Value::Object(m)=>m, _=>return Err(serde::de::Error::custom("expected object")) }; let tag=match payload.get("kind") { Some(serde_json::Value::String(t))=>Some(t.clone()), None=>None, _=>return Err(serde::de::Error::custom("missing discriminator")) }; match tag.as_deref() {
+Some("leaf") => { Ok(Self::Case0(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+Some("node") => { payload.remove("kind"); Ok(Self::Case1(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+None => { Ok(Self::Case0(Box::new(serde_json::from_value(serde_json::Value::Object(payload)).map_err(serde::de::Error::custom)?))) },
+_ => Err(serde::de::Error::custom("unknown discriminator")), } } }
 impl Node_item_Union { pub fn validate(&self)->Result<(),ValidationError>{ match self {
-Self::Case0(v) => v.validate(),
-Self::Case1(v) => v.validate(),
+Self::Case0(v) => { v.validate()?; if let Presence::Value(t)=&v.kind { if t!="leaf" { return Err(invalid("Node@default", "item", "unknown_discriminator")); } } Ok(()) },
+Self::Case1(v) => { v.validate()?; Ok(()) },
 } } }
 #[allow(non_camel_case_types, non_snake_case)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

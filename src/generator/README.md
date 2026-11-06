@@ -11,6 +11,8 @@ retains typed false/empty values. `Default` constructs absent fields.
 checks required members, inclusive collection bounds, nested models and ordered
 content references. These steps are explicit so deserialization does not erase
 absence. References and discriminator payloads are boxed to size recursive types.
+A `hash` attribute is an order-preserving string-to-string `StringHash` (the XML
+`any_attribute` target); other value shapes refuse on deserialize.
 Integer/decimal/rational boundaries use validated lexical string newtypes without
 floating-point conversion. A rational's wire boundary is a terminating decimal;
 exact arithmetic/rendering is the separate values module's responsibility.
