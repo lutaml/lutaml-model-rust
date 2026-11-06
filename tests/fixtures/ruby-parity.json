@@ -387,10 +387,8 @@
     }
    ]
   },
-  "ruby": "OK",
-  "ruby_checksum": "sha256:e1a0c8d3b5abbcf03de5b5e0e3ecd6cc7b89a59843488b465f97c78239a66207",
-  "rust": "ERR non_serializable_default",
-  "divergence": "Rust type-checks defaults and values members against the attribute type (Ruby leaves them declarative)"
+  "ruby": "ERR non_serializable_default",
+  "rust": "ERR non_serializable_default"
  },
  {
   "name": "v2_default_number_for_integer",
@@ -415,8 +413,7 @@
   },
   "ruby": "OK",
   "ruby_checksum": "sha256:e8f1761df326671ed16453103e1db937242578ab51ca982b1a3b4bbe472e0a34",
-  "rust": "ERR non_serializable_default",
-  "divergence": "Rust type-checks defaults and values members against the attribute type (Ruby leaves them declarative)"
+  "rust": "OK"
  },
  {
   "name": "v2_default_not_in_values",
@@ -543,9 +540,8 @@
     }
    ]
   },
-  "ruby": "OK",
-  "ruby_checksum": "sha256:25106bcd4e1fd539b9a8c0bda472aec9b94bf904f4acde5a82cd2b23d1606405",
-  "rust": "OK"
+  "ruby": "ERR non_serializable_default",
+  "rust": "ERR non_serializable_default"
  },
  {
   "name": "v2_default_5dot_integer",
@@ -568,10 +564,8 @@
     }
    ]
   },
-  "ruby": "OK",
-  "ruby_checksum": "sha256:4e3fbb48d6c3b80214372fe72aa70570f36d5ce4ebda54efe1d4669733efe51c",
-  "rust": "ERR non_serializable_default",
-  "divergence": "Rust type-checks defaults and values members against the attribute type (Ruby leaves them declarative)"
+  "ruby": "ERR non_serializable_default",
+  "rust": "ERR non_serializable_default"
  },
  {
   "name": "v2_default_dot_decimal",
@@ -6400,7 +6394,7 @@
   "rust": "ERR invalid_document"
  },
  {
-  "name": "r2_attr_name_a\u00e9",
+  "name": "r2_attr_name_aé",
   "kind": "document",
   "doc": {
    "lml": 2,
@@ -6408,7 +6402,7 @@
    "register": "default",
    "attributes": [
     {
-     "name": "a\u00e9",
+     "name": "aé",
      "type": {
       "kind": "builtin",
       "name": "string"

@@ -561,7 +561,7 @@ impl ModelEmitter for RustEmitter {
             for (a, ty) in m.attributes.iter().zip(&types) {
                 let field = member_identifier(&a.name);
                 if let DefaultValue::Present(v) = &a.default {
-                    writeln!(output,"if self.{field}.is_absent() {{ self.{field}=serde_json::from_str::<Presence<{}>>({}).map_err(|_|invalid({}, {}, \"non_serializable_default\"))?; }}",shape(a,ty),quote(&serde_json::to_string(v).unwrap()),quote(id),quote(&a.name)).unwrap();
+                    writeln!(output,"if self.{field}.is_absent() {{ self.{field}=serde_json::from_str::<Presence<{}>>({}).map_err(|_|invalid({}, {}, \"non_serializable_default\"))?; }}",shape(a,ty),quote(&serde_json::to_string(&wire_default(a, v)).unwrap()),quote(id),quote(&a.name)).unwrap();
                 } else if a.initialize_empty {
                     writeln!(output,"if self.{field}.is_absent() {{ self.{field}=Presence::Value(Vec::new()); }}").unwrap();
                 }
@@ -777,6 +777,17 @@ fn same_enum_literal(a: &Attribute, left: &NeutralValue, right: &NeutralValue) -
     }
     left == right
 }
+/// Ruby exports an integer default as a JSON number, but the generated
+/// instance wire form of an integer is an exact string, so the default is
+/// rendered to that wire form (per element for collections).
+pub(crate) fn wire_default(a: &Attribute, value: &NeutralValue) -> NeutralValue {
+    match value {
+        NeutralValue::Array(items) => {
+            NeutralValue::Array(items.iter().map(|i| wire_default(a, i)).collect())
+        }
+        _ => enum_literal(a, value),
+    }
+}
 fn enum_literal(a: &Attribute, value: &NeutralValue) -> NeutralValue {
     if matches!(
         a.value_type,
@@ -820,6 +831,12 @@ fn validate_literal(
             let d = s.strip_prefix('-').unwrap_or(s);
             !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit())
         }
+        (
+            TypeRef::Builtin {
+                name: BuiltinType::Integer,
+            },
+            NeutralValue::Signed(_) | NeutralValue::Unsigned(_),
+        ) => true,
         (
             TypeRef::Builtin {
                 name: BuiltinType::Decimal | BuiltinType::Rational,

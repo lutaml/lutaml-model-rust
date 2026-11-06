@@ -78,6 +78,13 @@ use serde_json::json;
  for wire in [r#"{"number":"3"}"#,r#"{"number":1}"#,r#"{"number":"9007199254740993123456789"}"#] { assert!(read_LmlPreservation_TypedEnum_json(wire).is_err()); }
 }
 
+#[test] fn ruby_numeric_integer_default_applies_as_the_exact_integer_wire_value() {
+ let mut model=read_IntDefault_json("{}").unwrap();assert!(matches!(model.count,Presence::Absent));
+ model.apply_defaults().unwrap();
+ assert!(matches!(&model.count,Presence::Value(v) if v.as_str()=="5"));
+ let explicit=read_IntDefault_json(r#"{"count":"7"}"#).unwrap();assert_eq!(write_IntDefault_json(&explicit).unwrap(),r#"{"count":"7"}"#);
+ let same=read_IntDefault_json(r#"{"count":"5"}"#).unwrap();assert_eq!(write_IntDefault_json(&same).unwrap(),"{}","a value equal to the numeric default is omitted like any default");
+}
 #[test] fn generated_rust_literals_preserve_control_text() {
  let control_text="\0\u{8}\u{c}\u{2028}";
  let mut model=read_ControlText_json("{}").unwrap();
