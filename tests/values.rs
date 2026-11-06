@@ -273,3 +273,78 @@ fn decimal_facets_use_contract_snake_case_names() {
         );
     }
 }
+
+#[test]
+fn float_wire_follows_rubys_fixed_notation_window() {
+    // Ruby 3.4 Float#to_s, measured: fixed through decpt 15, and at decpt 16
+    // only when the shortest digits are 17 long.
+    for (value, text) in [
+        (1e14, "100000000000000.0"),
+        (1e15, "1.0e15"),
+        (1234567890123456.0, "1.234567890123456e15"),
+        (1151450203773890.8, "1151450203773890.8"),
+        (1.2345678901234568e16, "1.2345678901234568e16"),
+        (123456789012345.0, "123456789012345.0"),
+    ] {
+        assert_eq!(values::float_wire(value), text, "{value:e}");
+        assert!(values::canonical_float(text), "{text}");
+    }
+}
+
+#[test]
+fn float_wire_matches_ruby_over_a_sweep_when_given_one() {
+    // RUBY_FLOAT_SWEEP: lines of "<u64 bits> <Float#to_s>" produced by ruby.
+    let Ok(path) = std::env::var("RUBY_FLOAT_SWEEP") else {
+        return;
+    };
+    let mut checked = 0;
+    for line in std::fs::read_to_string(path).unwrap().lines() {
+        let (bits, ruby) = line.split_once(' ').unwrap();
+        let value = f64::from_bits(bits.parse().unwrap());
+        assert_eq!(values::float_wire(value), ruby, "bits {bits}");
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn huge_decimal_parses_in_linear_time() {
+    let digits = format!("1{}.{}", "7".repeat(200_000), "3".repeat(200_000));
+    let started = std::time::Instant::now();
+    let value = ExactDecimal::parse(&digits).unwrap();
+    assert_eq!(value.as_str(), digits);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert!(ExactDecimal::parse(&format!("{}x", "7".repeat(400_000))).is_err());
+}
+
+#[test]
+fn float_wire_rounds_exact_quarter_ties_to_even_like_ruby() {
+    assert_eq!(
+        values::float_wire(1_714_220_873_188_463.0 + 0.25),
+        "1714220873188463.2"
+    );
+    assert_eq!(
+        values::float_wire(1_714_220_873_188_463.0 + 0.75),
+        "1714220873188463.8"
+    );
+}
+
+#[test]
+fn float_wire_matches_the_ruby_golden_vectors() {
+    // tests/fixtures/float_vectors.json is copied from the Ruby corpus
+    // (spec/fixtures/lml_conformance/float_vectors.json): hex bits -> Float#to_s.
+    let vectors: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/float_vectors.json")).unwrap();
+    assert!(vectors.len() > 1000);
+    for vector in vectors {
+        let bits = u64::from_str_radix(vector["bits"].as_str().unwrap(), 16).unwrap();
+        let wire = vector["wire"].as_str().unwrap();
+        let value = f64::from_bits(bits);
+        assert_eq!(values::float_wire(value), wire, "bits {bits:016x}");
+        assert_eq!(values::parse_float_wire(wire).unwrap().to_bits(), bits);
+    }
+}

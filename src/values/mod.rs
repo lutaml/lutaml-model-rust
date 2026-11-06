@@ -8,6 +8,7 @@ use num_traits::{One, Signed, Zero};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 fn failure(reason: ErrorReason, detail: impl Into<String>) -> Box<ContractError> {
     Box::new(ContractError {
@@ -110,28 +111,47 @@ pub fn render_decimal(value: &BigRational) -> ContractResult<String> {
 }
 
 /// Keeps authored precision, including trailing zeros and signed zero.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Parsing validates the lexical form in linear time; the exact rational is
+/// built on first use (decimal-to-bignum conversion is super-linear, and most
+/// callers only carry the authored text).
+#[derive(Clone, Debug)]
 pub struct ExactDecimal {
     lexical: String,
-    value: BigRational,
+    value: OnceLock<BigRational>,
 }
+impl PartialEq for ExactDecimal {
+    fn eq(&self, other: &Self) -> bool {
+        // The lexical form determines the value, so it is the whole identity.
+        self.lexical == other.lexical
+    }
+}
+impl Eq for ExactDecimal {}
 impl ExactDecimal {
     pub fn parse(input: &str) -> ContractResult<Self> {
+        if !is_exact_decimal(input) {
+            return Err(failure(
+                ErrorReason::InvalidDocument,
+                "expected a plain decimal string",
+            ));
+        }
         Ok(Self {
             lexical: input.into(),
-            value: parse_decimal(input)?,
+            value: OnceLock::new(),
         })
     }
     pub fn as_str(&self) -> &str {
         &self.lexical
     }
     pub fn rational(&self) -> &BigRational {
-        &self.value
+        self.value.get_or_init(|| {
+            parse_decimal(&self.lexical).expect("lexical form was validated at parse")
+        })
     }
     pub fn from_rational(value: BigRational) -> ContractResult<Self> {
         Ok(Self {
             lexical: render_decimal(&value)?,
-            value,
+            value: OnceLock::from(value),
         })
     }
 }
@@ -149,7 +169,8 @@ impl<'de> Deserialize<'de> for ExactDecimal {
 
 /// Portable `float` wire text: Ruby's shortest round-trip digits with one
 /// exponent spelling (lowercase `e`, no `+`, no leading zeros, always a
-/// fraction digit). Fixed notation when -4 < decimal-point position <= 15.
+/// fraction digit). Fixed notation when -4 < decimal-point position <= 15, or
+/// position 16 with 17 shortest digits (Ruby's `Float#to_s` rule).
 /// `{:e}` yields the shortest round-trip digits; only the layout is ours.
 /// The finite check is a precondition: callers refuse NaN/Infinity first.
 pub fn float_wire(value: f64) -> String {
@@ -165,13 +186,32 @@ pub fn float_wire(value: f64) -> String {
     let (mantissa, exponent) = sci
         .split_once('e')
         .expect("LowerExp always has an exponent");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let mut digits: String = mantissa.chars().filter(|c| *c != '.').collect();
     let decpt = exponent
         .parse::<i32>()
         .expect("LowerExp exponent is an integer")
         + 1;
+    // Exact ties: Rust's shortest digits round a tie up, Ruby's dtoa rounds it
+    // to even. `{:.n}` rounds the exact value half-to-even at the same width.
+    let places = digits.len() as i32 - decpt;
+    if places > 0 {
+        let exact = format!("{:.*}", places as usize, value.abs());
+        let exact: String = exact
+            .chars()
+            .filter(|c| *c != '.')
+            .skip_while(|c| *c == '0')
+            .collect();
+        if exact != digits && exact.len() == digits.len() && exact.parse::<f64>().is_ok() {
+            let scaled = format!("{}e{}", exact, -places);
+            if scaled.parse::<f64>() == Ok(value.abs()) {
+                digits = exact;
+            }
+        }
+    }
     let sign = if value < 0.0 { "-" } else { "" };
-    if decpt > -4 && decpt <= 15 {
+    // Ruby's Float#to_s: fixed for -4 < decpt <= 15, and also at decpt 16
+    // when the shortest digits fill all 17 places.
+    if decpt > -4 && (decpt <= 15 || (decpt == 16 && digits.len() == 17)) {
         if decpt <= 0 {
             format!(
                 "{sign}0.{}{digits}",
@@ -337,10 +377,10 @@ pub fn validate_decimal_facets(
                 };
                 let threshold = parse_decimal(text)?;
                 match name.as_str() {
-                    "min_inclusive" => value.value >= threshold,
-                    "min_exclusive" => value.value > threshold,
-                    "max_inclusive" => value.value <= threshold,
-                    _ => value.value < threshold,
+                    "min_inclusive" => *value.rational() >= threshold,
+                    "min_exclusive" => *value.rational() > threshold,
+                    "max_inclusive" => *value.rational() <= threshold,
+                    _ => *value.rational() < threshold,
                 }
             }
             "total_digits" | "fraction_digits" => {
@@ -354,7 +394,7 @@ pub fn validate_decimal_facets(
                         ))
                     }
                 };
-                let rendered = render_decimal(&value.value)?;
+                let rendered = render_decimal(value.rational())?;
                 let unsigned = rendered.trim_start_matches('-');
                 let digits = if name == "fraction_digits" {
                     unsigned.split_once('.').map_or(0, |(_, part)| part.len())
