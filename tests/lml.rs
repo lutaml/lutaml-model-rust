@@ -913,8 +913,9 @@ fn v1_json_floats_keep_ruby_checksums_or_refuse() {
 #[test]
 fn large_documents_load_in_bounded_time() {
     use std::time::{Duration, Instant};
-    // Generous for an unoptimised, possibly loaded run: a quadratic scan of 160k
-    // entries takes minutes, a linear one a few seconds.
+    // Wall-clock limits flake on a loaded machine, so the scans are checked by
+    // how they scale: 4x the entries must cost well under 16x the time (what a
+    // quadratic scan costs). A linear scan measures about 4x.
     let limit = Duration::from_secs(20);
     let within = |label: &str, limit: Duration, run: &dyn Fn()| {
         let started = Instant::now();
@@ -925,34 +926,47 @@ fn large_documents_load_in_bounded_time() {
             started.elapsed()
         );
     };
-    let n = 160_000;
-    let types: String = (0..n)
-        .map(|i| format!(r#""v{i}":{{"base":"string","facets":{{}}}}"#))
-        .collect::<Vec<_>>()
-        .join(",");
-    let json = format!(
-        r#"{{"lml_bundle":1,"roots":[],"models":{{}},"value_types":{{{types}}},"capabilities":[]}}"#
-    );
-    within("160k JSON keys", limit, &|| {
-        load(json.as_bytes(), InputFormat::Json).unwrap();
-    });
-    let yaml = (0..n).fold(String::new(), |mut out, i| {
-        out.push_str(&format!("  v{i}: {{base: string, facets: {{}}}}\n"));
-        out
-    });
-    let yaml =
-        format!("lml_bundle: 1\nroots: []\nmodels: {{}}\ncapabilities: []\nvalue_types:\n{yaml}");
-    within("160k YAML keys", limit, &|| {
-        load(yaml.as_bytes(), InputFormat::Yaml).unwrap();
-    });
-    let values: Vec<String> = (0..n).map(|i| format!("\"e{i}\"")).collect();
-    let attr = format!(
-        r#"{{"lml":2,"model":"Foo","register":"default","attributes":[{{"name":"a","type":{{"kind":"builtin","name":"string"}},"values":[{}]}}]}}"#,
-        values.join(",")
-    );
-    within("160k enum values", limit, &|| {
-        load(attr.as_bytes(), InputFormat::Json).unwrap();
-    });
+    let timed = |text: &str, format: InputFormat| {
+        let started = Instant::now();
+        load(text.as_bytes(), format).unwrap();
+        started.elapsed().as_secs_f64()
+    };
+    let scales_linearly = |label: &str, format: InputFormat, build: &dyn Fn(usize) -> String| {
+        let (small, large) = (build(20_000), build(80_000));
+        timed(&small, format); // warm up allocator and code paths
+        let ratio = timed(&large, format) / timed(&small, format).max(1e-3);
+        assert!(
+            ratio < 10.0,
+            "{label}: 4x entries took {ratio:.1}x the time"
+        );
+    };
+    let json_types = |n: usize| {
+        let types: String = (0..n)
+            .map(|i| format!(r#""v{i}":{{"base":"string","facets":{{}}}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            r#"{{"lml_bundle":1,"roots":[],"models":{{}},"value_types":{{{types}}},"capabilities":[]}}"#
+        )
+    };
+    scales_linearly("JSON keys", InputFormat::Json, &json_types);
+    let yaml_types = |n: usize| {
+        let yaml = (0..n).fold(String::new(), |mut out, i| {
+            out.push_str(&format!("  v{i}: {{base: string, facets: {{}}}}\n"));
+            out
+        });
+        format!("lml_bundle: 1\nroots: []\nmodels: {{}}\ncapabilities: []\nvalue_types:\n{yaml}")
+    };
+    scales_linearly("YAML keys", InputFormat::Yaml, &yaml_types);
+    let enum_doc = |n: usize| {
+        let values: Vec<String> = (0..n).map(|i| format!("\"e{i}\"")).collect();
+        format!(
+            r#"{{"lml":2,"model":"Foo","register":"default","attributes":[{{"name":"a","type":{{"kind":"builtin","name":"string"}},"values":[{}]}}]}}"#,
+            values.join(",")
+        )
+    };
+    scales_linearly("enum values", InputFormat::Json, &enum_doc);
+    let attr = enum_doc(20_000);
     let duplicate = attr.replace("\"e7\"", "\"e8\"");
     assert_eq!(
         load(duplicate.as_bytes(), InputFormat::Json)
