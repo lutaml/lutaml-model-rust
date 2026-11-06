@@ -53,10 +53,20 @@ impl Artifacts {
                 return Err(invalid("duplicate generated path"));
             }
         }
-        files.insert("mod.rs".into(), "pub use lutaml_model::{contracts, values};\npub mod models;\npub mod parg_bindings;\npub mod json_codecs;\n".into());
-        // This artifact contains JSON codecs; source XML declarations do not
-        // imply an available XML implementation in the generated consumer.
-        let capabilities = vec!["json".into()];
+        #[allow(unused_mut)]
+        let mut module = String::from("pub use lutaml_model::{contracts, values};\npub mod models;\npub mod parg_bindings;\npub mod json_codecs;\n");
+        // Source XML declarations alone do not imply an XML implementation in the
+        // generated consumer: the codecs are emitted only where this build has them.
+        #[allow(unused_mut)]
+        let mut capabilities: Vec<String> = vec!["json".into()];
+        #[cfg(feature = "xml")]
+        if bundle.models.values().any(|m| m.mappings.xml.is_some()) {
+            use crate::contracts::XmlCodecEmitter;
+            files.extend(crate::xml::RustXmlEmitter.generate_xml_codecs(&bundle, bindings)?);
+            module.push_str("pub use lutaml_model::xml as xml_rt;\npub mod xml_codecs;\n");
+            capabilities.push("xml".into());
+        }
+        files.insert("mod.rs".into(), module);
         let manifest = Manifest {
             manifest: 1,
             lml_checksum: snapshot.checksum().into(),
@@ -69,6 +79,14 @@ impl Artifacts {
                         include_bytes!("../generator/runtime.rs.txt").as_slice(),
                         include_bytes!("../codecs/mod.rs").as_slice(),
                         include_bytes!("../codecs/runtime.rs.txt").as_slice(),
+                        #[cfg(feature = "xml")]
+                        include_bytes!("../xml/emitter.rs").as_slice(),
+                        #[cfg(feature = "xml")]
+                        include_bytes!("../xml/reader_emitter.rs").as_slice(),
+                        #[cfg(feature = "xml")]
+                        include_bytes!("../xml/writer_emitter.rs").as_slice(),
+                        #[cfg(feature = "xml")]
+                        include_bytes!("../xml/projection.rs").as_slice(),
                     ]
                     .concat()
                 )
@@ -161,8 +179,37 @@ impl Artifacts {
                 return Err(invalid("artifact checksum mismatch"));
             }
         }
+        let mut pinned: BTreeSet<&str> = supplied.files.iter().map(|p| p.path.as_str()).collect();
+        pinned.insert(MANIFEST_FILE);
+        let mut found = Vec::new();
+        list_files(root, root, &mut found)?;
+        if let Some(extra) = found.iter().find(|f| !pinned.contains(f.as_str())) {
+            return Err(invalid(&format!(
+                "unpinned file in artifact directory: {extra}"
+            )));
+        }
         Ok(())
     }
+}
+/// Every entry under `root` as a `/`-joined relative path; symlinks are listed,
+/// never followed, so they surface as unpinned files.
+fn list_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> ArtifactResult<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            list_files(root, &path, out)?;
+        } else {
+            let rel = path.strip_prefix(root)?;
+            out.push(
+                rel.components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/"),
+            );
+        }
+    }
+    Ok(())
 }
 fn canonical_manifest(manifest: &Manifest) -> ArtifactResult<Vec<u8>> {
     // serde_json's default Map sorts keys, including nested manifest records.

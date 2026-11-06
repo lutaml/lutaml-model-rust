@@ -20,8 +20,35 @@ fn pointer(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
 }
 
+/// XML 1.0 NCName (no colon). Checked at generate time so a bad name is a named
+/// refusal here, not a NotSerializable failure on the first write.
+fn is_ncname(name: &str) -> bool {
+    let start = |c: char| c.is_alphabetic() || c == '_';
+    let mut chars = name.chars();
+    chars.next().is_some_and(start)
+        && chars.all(|c| start(c) || c.is_alphanumeric() || matches!(c, '-' | '.' | '\u{B7}'))
+}
+
+fn xml_name(id: &str, name: &str, location: &str) -> ContractResult<()> {
+    if is_ncname(name) {
+        Ok(())
+    } else {
+        Err(error(
+            id,
+            ErrorReason::UnsupportedMapping,
+            location,
+            &format!("invalid XML name {name:?}"),
+        ))
+    }
+}
+
 fn namespace(id: &str, ns: &Namespace, location: &str) -> ContractResult<()> {
     if let Namespace::Uri { uri, prefix } = ns {
+        if let Some(prefix) = prefix {
+            if !prefix.is_empty() {
+                xml_name(id, prefix, &format!("{location}/prefix"))?;
+            }
+        }
         if uri.is_empty()
             || prefix
                 .as_ref()
@@ -284,6 +311,9 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
             "root",
         ));
     }
+    if let Some(root) = &mapping.root {
+        xml_name(id, &root.element, &format!("{path}/root/element"))?;
+    }
     let attributes: BTreeMap<_, _> = model
         .attributes
         .iter()
@@ -417,6 +447,14 @@ pub fn compile_projection(bundle: &Bundle, id: &str) -> ContractResult<Projectio
                 &format!("{location}/name"),
                 "name aliases",
             ));
+        }
+        if rule.kind != XmlRuleKind::Content {
+            for (i, alias) in aliases.iter().enumerate() {
+                xml_name(id, alias, &format!("{location}/name/{i}"))?;
+            }
+        }
+        if let Some(prefix) = rule.prefix.as_ref().filter(|p| !p.is_empty()) {
+            xml_name(id, prefix, &format!("{location}/prefix"))?;
         }
         if rule
             .prefix

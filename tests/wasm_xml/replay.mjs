@@ -1,6 +1,7 @@
 // Shared by Node and the browser: replay every corpus case through the wasm codecs,
 // compare to the Ruby corpus and, byte for byte, to the native Rust results.
-import { loadArtifact, digest } from './loader.mjs';
+import { loadArtifact as load, digest, XML_PROFILE } from '../../src/wasm/loader.mjs';
+const loadArtifact = options => load({ profile: XML_PROFILE, ...options });
 import { dump, withoutRubyMarker } from './dump.mjs';
 import { xmlTree } from './xmltree.mjs';
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : v);
