@@ -108,7 +108,7 @@ use serde_json::json;
 #[test] fn numeric_json_is_refused_with_the_portable_boundary_error_under_arbitrary_precision() {
  for wire in [r#"{"label":"a","extra":1.5}"#,r#"{"label":"a","extra":1e2}"#,r#"{"label":"a","extra":123456789012345678901234567890}"#] {
   let error=read_Record_json(wire).unwrap_err();
-  assert!(format!("{error:?}").contains("not a portable exact boundary"),"{wire}: {error:?}");
+  assert!(format!("{error:?}").contains("not a portable exact boundary")&&format!("{error:?}").contains("portable-exact-json-v1")&&format!("{error:?}").contains("ruby-native-v1"),"{wire}: {error:?}");
  }
  read_Record_json(r#"{"label":"a","__lml_content":[{"kind":"element","attribute":"title","index":0}]}"#).unwrap();
 }

@@ -9,12 +9,13 @@ fn failure(reason: ErrorReason, id: &str, member: &str, location: &str, detail: 
 fn object(value:Value,id:&str)->ContractResult<Map<String,Value>> { value.as_object().cloned().ok_or_else(||failure(ErrorReason::InvalidDocument,id,"","/input","expected object")) }
 #[allow(dead_code)]
 fn empty(v:&Value)->bool { match v { Value::String(v)=>v.is_empty(),Value::Array(v)=>v.is_empty(),Value::Object(v)=>v.is_empty(),_=>false } }
+fn numeric_json_err()->&'static str{"numeric JSON is not a portable exact boundary: the portable-exact-json-v1 profile requires exact values as strings; this looks like ruby-native-v1 numeric JSON (Ruby to_json), which is not accepted"}
 // Only a plain 64-bit integer (ordered-content indexes) may be a JSON number; any
 // fractional, exponent, negative-zero or oversized spelling is not a portable exact boundary.
 fn plain_integer(n:&str)->Result<Value,&'static str>{
  let digits=n.strip_prefix('-').unwrap_or(n);
  let ok=!digits.is_empty()&&digits.bytes().all(|c|c.is_ascii_digit())&&n!="-0"&&(n.parse::<i64>().is_ok()||n.parse::<u64>().is_ok());
- if ok{serde_json::from_str::<Value>(n).map_err(|_|"numeric JSON is not a portable exact boundary")}else{Err("numeric JSON is not a portable exact boundary")}
+ if ok{serde_json::from_str::<Value>(n).map_err(|_|numeric_json_err())}else{Err(numeric_json_err())}
 }
 fn parse_json(input:&str,id:&str)->ContractResult<Value>{
  // Reject duplicate keys before mapping aliases. serde_json::Value alone would
@@ -29,7 +30,7 @@ fn parse_json(input:&str,id:&str)->ContractResult<Value>{
     fn visit_bool<E:serde::de::Error>(self,v:bool)->Result<Unique,E>{Ok(Unique(Value::Bool(v)))}
     fn visit_i64<E:serde::de::Error>(self,v:i64)->Result<Unique,E>{Ok(Unique(v.into()))}
     fn visit_u64<E:serde::de::Error>(self,v:u64)->Result<Unique,E>{Ok(Unique(v.into()))}
-    fn visit_f64<E:serde::de::Error>(self,_:f64)->Result<Unique,E>{Err(E::custom("numeric JSON is not a portable exact boundary"))}
+    fn visit_f64<E:serde::de::Error>(self,_:f64)->Result<Unique,E>{Err(E::custom(numeric_json_err()))}
     fn visit_str<E:serde::de::Error>(self,v:&str)->Result<Unique,E>{Ok(Unique(Value::String(v.into())))}
     fn visit_string<E:serde::de::Error>(self,v:String)->Result<Unique,E>{Ok(Unique(Value::String(v)))}
     fn visit_unit<E:serde::de::Error>(self)->Result<Unique,E>{Ok(Unique(Value::Null))}

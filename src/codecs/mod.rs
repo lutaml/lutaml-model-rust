@@ -256,7 +256,7 @@ fn transformed(
             _ => None,
         };
         if let Some(exact) = exact {
-            writeln!(out,"let lexical=v.as_str().ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/input\", \"exact value requires string\"))?; super::values::{exact}::parse(lexical).map_err(|e|failure(e.reason.clone(),{}, {}, \"/input\",e.to_string()))?;",q(id),q(&a.name),q(id),q(&a.name)).unwrap();
+            writeln!(out,"let lexical=v.as_str().ok_or_else(||failure(ErrorReason::InvalidDocument,{}, {}, \"/input\", \"exact value requires string (portable-exact-json-v1 requires exact values as strings; numeric JSON is ruby-native-v1 and is not accepted)\"))?; super::values::{exact}::parse(lexical).map_err(|e|failure(e.reason.clone(),{}, {}, \"/input\",e.to_string()))?;",q(id),q(&a.name),q(id),q(&a.name)).unwrap();
         }
     }
     Ok(())
