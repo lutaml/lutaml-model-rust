@@ -136,6 +136,27 @@ pub enum BuiltinType {
     HexBinary,
     Symbol,
     Hash,
+    EmailAddress,
+    IpV4Address,
+    IpV6Address,
+    Uuid,
+    Reference,
+    UriReference,
+    DateWithTimezone,
+    DateTimeWithTimezone,
+    DayTimeDuration,
+    YearMonthDuration,
+    PositiveInteger,
+    NonNegativeInteger,
+}
+impl BuiltinType {
+    /// Integer-like builtins (the contract defines no bounds for the signed variants).
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            Self::Integer | Self::PositiveInteger | Self::NonNegativeInteger
+        )
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]

@@ -1098,13 +1098,13 @@ fn any_attribute_rule_is_validated_like_ruby_and_typed() {
 }
 
 /// Ruby review-R2 rules (attribute names, reserved members, nesting depth,
-/// mapping scalars, duplicate keys): 154 Ruby-generated cases with the expected
+/// mapping scalars, duplicate keys): 178 Ruby-generated cases with the expected
 /// reason and, where Ruby reports one, location (bundle text errors have none).
 #[test]
 fn ruby_r2_refusal_cases_match_ruby() {
     let cases: Vec<Value> =
         serde_json::from_str(include_str!("fixtures/r2_refusals.json")).unwrap();
-    assert_eq!(cases.len(), 154);
+    assert_eq!(cases.len(), 178);
     for ty in [
         "string",
         "token",
@@ -1127,6 +1127,18 @@ fn ruby_r2_refusal_cases_match_ruby() {
         "hex_binary",
         "symbol",
         "hash",
+        "email_address",
+        "ip_v4_address",
+        "ip_v6_address",
+        "uuid",
+        "reference",
+        "uri_reference",
+        "date_with_timezone",
+        "date_time_with_timezone",
+        "day_time_duration",
+        "year_month_duration",
+        "positive_integer",
+        "non_negative_integer",
     ] {
         for kind in ["ok", "refused"] {
             let name = format!("typed_default_{kind}_{ty}");

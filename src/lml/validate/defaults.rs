@@ -165,6 +165,11 @@ pub(super) fn exact(s: &str, decimal: bool) -> bool {
         crate::values::is_exact_integer(s)
     }
 }
+fn is_integer_name(typ: &Node) -> bool {
+    typ.get("name")
+        .and_then(Node::string)
+        .is_some_and(|n| INTEGER_BUILTINS.contains(&n))
+}
 pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<()> {
     if value == &Node::Null {
         return Ok(());
@@ -173,7 +178,7 @@ pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<
         Some("builtin") => match typ.get("name").and_then(Node::string).unwrap() {
             "boolean" => matches!(value, Node::Bool(_)),
             // Ruby exports integer defaults as JSON numbers and refuses strings.
-            "integer" => {
+            name if INTEGER_BUILTINS.contains(&name) => {
                 matches!(value, Node::Number(v) if v.as_i64().is_some() || v.as_u64().is_some())
             }
             "float" => value.string().is_some_and(crate::values::canonical_float),
@@ -201,7 +206,7 @@ fn enum_equal(a: &Node, b: &Node, typ: &Node) -> bool {
     if a == b {
         return true;
     }
-    if typ.get("name").and_then(Node::string) != Some("integer") {
+    if !is_integer_name(typ) {
         return false;
     }
     let integer = |value: &Node| -> Option<num_bigint::BigInt> {
@@ -219,7 +224,7 @@ fn enum_equal(a: &Node, b: &Node, typ: &Node) -> bool {
 /// Integer enum literals are typed schema metadata, not instance wire values.
 /// Their bounded JSON integer spelling remains numeric in the immutable tree.
 pub(super) fn enum_value(value: &Node, typ: &Node, at: &str) -> ContractResult<()> {
-    if typ.get("name").and_then(Node::string) == Some("integer")
+    if is_integer_name(typ)
         && matches!(value,Node::Number(v) if v.as_i64().is_some()||v.as_u64().is_some())
     {
         return Ok(());

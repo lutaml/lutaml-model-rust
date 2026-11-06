@@ -567,3 +567,43 @@ fn registers_sharing_a_model_name_get_deterministic_register_suffixed_names() {
         ErrorReason::ReservedMember
     );
 }
+#[test]
+fn ruby_builtin_names_map_to_target_types() {
+    let generate = |name: BuiltinType| {
+        let mut b = bundle();
+        b.models.get_mut("Leaf@default").unwrap().attributes[0].value_type =
+            TypeRef::Builtin { name };
+        RustEmitter.generate_models(&b, &TypeBindings::new())
+    };
+    for name in [
+        BuiltinType::PositiveInteger,
+        BuiltinType::NonNegativeInteger,
+    ] {
+        assert!(generate(name).unwrap()["models.rs"].contains("ExactInteger"));
+    }
+    assert!(generate(BuiltinType::Reference).is_ok());
+    for name in [
+        BuiltinType::EmailAddress,
+        BuiltinType::IpV4Address,
+        BuiltinType::IpV6Address,
+        BuiltinType::Uuid,
+        BuiltinType::UriReference,
+        BuiltinType::DateWithTimezone,
+        BuiltinType::DateTimeWithTimezone,
+        BuiltinType::DayTimeDuration,
+        BuiltinType::YearMonthDuration,
+    ] {
+        assert_eq!(
+            generate(name).unwrap_err().reason,
+            ErrorReason::UnsupportedType
+        );
+    }
+    let wire: TypeRef =
+        serde_json::from_str(r#"{"kind":"builtin","name":"ip_v4_address"}"#).unwrap();
+    assert_eq!(
+        wire,
+        TypeRef::Builtin {
+            name: BuiltinType::IpV4Address
+        }
+    );
+}

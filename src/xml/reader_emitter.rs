@@ -193,9 +193,21 @@ fn scalar_kind(bundle: &Bundle, id: &str, attribute: &Attribute) -> ContractResu
             | BuiltinType::Time
             | BuiltinType::DateTime
             | BuiltinType::TimeWithoutDate
-            | BuiltinType::Duration => Kind::Str,
+            | BuiltinType::Duration
+            | BuiltinType::EmailAddress
+            | BuiltinType::IpV4Address
+            | BuiltinType::IpV6Address
+            | BuiltinType::Uuid
+            | BuiltinType::Reference
+            | BuiltinType::UriReference
+            | BuiltinType::DateWithTimezone
+            | BuiltinType::DateTimeWithTimezone
+            | BuiltinType::DayTimeDuration
+            | BuiltinType::YearMonthDuration => Kind::Str,
             BuiltinType::Boolean => Kind::Bool,
-            BuiltinType::Integer => Kind::Int,
+            BuiltinType::Integer
+            | BuiltinType::PositiveInteger
+            | BuiltinType::NonNegativeInteger => Kind::Int,
             BuiltinType::Decimal | BuiltinType::Rational => Kind::Decimal,
             BuiltinType::Float => Kind::Float,
             BuiltinType::Qname => Kind::QName,
