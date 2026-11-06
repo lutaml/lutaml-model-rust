@@ -590,8 +590,7 @@
   },
   "ruby": "OK",
   "ruby_checksum": "sha256:2dce8840a1dd8bf67b7a94e099253f76b9a955bc4aa2d1adbce947ab7c4fd0ca",
-  "rust": "ERR non_serializable_default",
-  "divergence": "Rust type-checks defaults and values members against the attribute type (Ruby leaves them declarative)"
+  "rust": "OK"
  },
  {
   "name": "v2_default_float_canonical",

@@ -85,6 +85,16 @@ pub(super) fn attribute(n: &Node, at: &str) -> ContractResult<()> {
     match (field(default, "present", &loc)?, default.get("value")) {
         (Node::Bool(false), None) => {}
         (Node::Bool(true), Some(value)) => {
+            // A float default is one canonical float string (Ruby's float_default):
+            // never null, never a collection of floats.
+            let float = typ.get("kind").and_then(Node::string) == Some("builtin")
+                && typ.get("name").and_then(Node::string) == Some("float");
+            if float && (value == &Node::Null || collection != &Node::Bool(false)) {
+                return Err(invalid(
+                    &pointer(&loc, "value"),
+                    "float default must be a canonical float string",
+                ));
+            }
             if collection == &Node::Bool(false) {
                 typed_value(value, typ, &pointer(&loc, "value"))?;
             } else if value != &Node::Null {
@@ -166,15 +176,12 @@ pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<
             "integer" => {
                 matches!(value, Node::Number(v) if v.as_i64().is_some() || v.as_u64().is_some())
             }
-            "decimal" | "rational" => value.string().is_some_and(|s| exact(s, true)),
             "float" => value.string().is_some_and(crate::values::canonical_float),
             "hash" => matches!(value, Node::Object(_)),
-            "qname" => {
-                value.object().is_some()
-                    && value.get("namespace").and_then(Node::string).is_some()
-                    && value.get("local").and_then(Node::string).is_some()
-                    && value.object().unwrap().len() == 2
-            }
+            // Every other builtin (decimal, rational, date, time, qname, ...) is its
+            // string spelling, exactly as Ruby's exporter writes it (a qname is
+            // "prefix:local" or "{uri}local", never an object; decimal and rational
+            // are shape-checked only, like Ruby and TS). Float keeps its own rule above.
             _ => matches!(value, Node::String(_)),
         },
         Some("model") => matches!(value, Node::Object(_)),

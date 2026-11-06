@@ -196,7 +196,14 @@ fn validates_exact_default_presence_and_structural_bounds_without_float_fallback
         ErrorReason::InvalidDocument,
         &format!("{at}/default/value"),
     );
-    for value in [json!(1.25), json!(true), json!("1/3"), json!("NaN")] {
+    // decimal is shape-checked only (a JSON string), as in Ruby and TS: the
+    // exporter passes a user's string through verbatim.
+    for value in [json!("1/3"), json!("NaN"), json!("abc")] {
+        let mut v = bundle();
+        v["models"]["Example::Node@custom"]["attributes"][0]["default"]["value"] = value;
+        parsed(&v);
+    }
+    for value in [json!(1.25), json!(true)] {
         let mut v = bundle();
         v["models"]["Example::Node@custom"]["attributes"][0]["default"]["value"] = value;
         let error = load(&bytes(&v), InputFormat::Json).unwrap_err();
@@ -1077,13 +1084,41 @@ fn any_attribute_rule_is_validated_like_ruby_and_typed() {
 }
 
 /// Ruby review-R2 rules (attribute names, reserved members, nesting depth,
-/// mapping scalars, duplicate keys): 97 Ruby-generated cases with the expected
+/// mapping scalars, duplicate keys): 154 Ruby-generated cases with the expected
 /// reason and, where Ruby reports one, location (bundle text errors have none).
 #[test]
 fn ruby_r2_refusal_cases_match_ruby() {
     let cases: Vec<Value> =
         serde_json::from_str(include_str!("fixtures/r2_refusals.json")).unwrap();
-    assert_eq!(cases.len(), 103);
+    assert_eq!(cases.len(), 154);
+    for ty in [
+        "string",
+        "token",
+        "uri",
+        "email",
+        "hostname",
+        "ip",
+        "boolean",
+        "integer",
+        "decimal",
+        "float",
+        "rational",
+        "date",
+        "time",
+        "date_time",
+        "time_without_date",
+        "duration",
+        "qname",
+        "base64_binary",
+        "hex_binary",
+        "symbol",
+        "hash",
+    ] {
+        for kind in ["ok", "refused"] {
+            let name = format!("typed_default_{kind}_{ty}");
+            assert!(cases.iter().any(|c| c["name"] == name), "{name} missing");
+        }
+    }
     let mut failures = Vec::new();
     for case in &cases {
         let name = case["name"].as_str().unwrap();
