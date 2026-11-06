@@ -37,8 +37,10 @@ fn digits(part: &str) -> bool {
 /// The one lexical rule for exact decimals, shared by `ExactDecimal`, the
 /// loader's default/facet checks and generated types: an optional sign, then
 /// digits with an optional fraction (`1`, `1.5`, `5.`, `.5`, `+1`; never `.`,
-/// exponents or separators). It is the set Ruby's `BigDecimal()` reads and the
-/// shared exact-vectors fixture records.
+/// exponents or separators). This is the portable-exact-json-v1 plain-decimal
+/// form recorded by the shared exact-vectors fixture; it is deliberately
+/// narrower than Ruby's `BigDecimal()` and refuses the exponent spelling
+/// (`"0.15e1"`) that `BigDecimal#to_json` emits.
 pub fn is_exact_decimal(input: &str) -> bool {
     let (_, unsigned) = unsigned(input);
     let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
@@ -59,7 +61,7 @@ pub fn parse_decimal(input: &str) -> ContractResult<BigRational> {
     if !is_exact_decimal(input) {
         return Err(failure(
             ErrorReason::InvalidDocument,
-            "expected a plain decimal string",
+            "expected a plain decimal string (portable-exact-json-v1 refuses exponent forms such as Ruby BigDecimal#to_json \"0.15e1\")",
         ));
     }
     let digits = format!("{whole}{fraction}");
@@ -132,7 +134,7 @@ impl ExactDecimal {
         if !is_exact_decimal(input) {
             return Err(failure(
                 ErrorReason::InvalidDocument,
-                "expected a plain decimal string",
+                "expected a plain decimal string (portable-exact-json-v1 refuses exponent forms such as Ruby BigDecimal#to_json \"0.15e1\")",
             ));
         }
         Ok(Self {

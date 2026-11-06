@@ -20,13 +20,24 @@ fn pointer(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
 }
 
-/// XML 1.0 NCName (no colon). Checked at generate time so a bad name is a named
-/// refusal here, not a NotSerializable failure on the first write.
+/// XML 1.0 (5th edition) NCName: `Name` without the colon. Checked at generate
+/// time so a bad name is a named refusal here, not a NotSerializable failure on
+/// the first write.
 fn is_ncname(name: &str) -> bool {
-    let start = |c: char| c.is_alphabetic() || c == '_';
+    let start = |c: char| {
+        matches!(c,
+            'A'..='Z' | '_' | 'a'..='z'
+            | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{2FF}'
+            | '\u{370}'..='\u{37D}' | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}'
+            | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+            | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+    };
     let mut chars = name.chars();
     chars.next().is_some_and(start)
-        && chars.all(|c| start(c) || c.is_alphanumeric() || matches!(c, '-' | '.' | '\u{B7}'))
+        && chars.all(|c| {
+            start(c)
+                || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
+        })
 }
 
 fn xml_name(id: &str, name: &str, location: &str) -> ContractResult<()> {
