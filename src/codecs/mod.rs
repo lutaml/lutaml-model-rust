@@ -336,7 +336,7 @@ fn policy(out: &mut String, rule: &KeyRule, a: &Attribute) {
     let p = rule.render.as_ref().unwrap_or(&default);
     if !matches!(p.default, RenderAction::Boolean(true)) {
         if let DefaultValue::Present(v) = &a.default {
-            writeln!(out,"if v==serde_json::from_str::<Value>({}).expect(\"generated literal\") {{ continue; }}",q(&serde_json::to_string(v).unwrap())).unwrap();
+            writeln!(out,"if v==serde_json::from_str::<Value>({}).expect(\"generated literal\") {{ continue; }}",q(&serde_json::to_string(&crate::generator::wire_default(a, v)).unwrap())).unwrap();
         }
     }
     match resolved(&p.nil, RenderAction::Nil) {

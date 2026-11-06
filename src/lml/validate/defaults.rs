@@ -162,7 +162,10 @@ pub(super) fn typed_value(value: &Node, typ: &Node, at: &str) -> ContractResult<
     let valid = match typ.get("kind").and_then(Node::string) {
         Some("builtin") => match typ.get("name").and_then(Node::string).unwrap() {
             "boolean" => matches!(value, Node::Bool(_)),
-            "integer" => value.string().is_some_and(|s| exact(s, false)),
+            // Ruby exports integer defaults as JSON numbers and refuses strings.
+            "integer" => {
+                matches!(value, Node::Number(v) if v.as_i64().is_some() || v.as_u64().is_some())
+            }
             "decimal" | "rational" => value.string().is_some_and(|s| exact(s, true)),
             "float" => value.string().is_some_and(crate::values::canonical_float),
             "hash" => matches!(value, Node::Object(_)),

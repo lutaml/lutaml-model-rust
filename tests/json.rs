@@ -492,6 +492,23 @@ fn consumer_bundle() -> (Bundle, Vec<serde_json::Value>) {
         model("BigEnum", vec![integer], vec![keep("number", &["number"])]),
     );
 
+    let mut count = attribute("count", BuiltinType::Integer);
+    count.default = DefaultValue::Present(NeutralValue::Signed(5));
+    b.models.insert(
+        "IntDefault@default".into(),
+        model(
+            "IntDefault",
+            vec![count],
+            vec![rule(
+                "count",
+                &["count"],
+                RenderAction::Nil,
+                RenderAction::Blank,
+                false,
+            )],
+        ),
+    );
+
     let mut ratio = attribute("ratio", BuiltinType::Float);
     ratio.default = DefaultValue::Present(NeutralValue::String("0.71".into()));
     b.models.insert(
@@ -591,7 +608,7 @@ num-traits="=0.2.19"
         String::from_utf8_lossy(&result.stderr)
     );
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("13 passed"), "{stdout}");
+    assert!(stdout.contains("14 passed"), "{stdout}");
 }
 
 #[test]

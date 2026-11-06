@@ -779,7 +779,7 @@ fn exact_integer_defaults_compare_to_typed_numeric_enum_metadata() {
     ))
     .unwrap();
     schema["models"]["LmlPreservation::TypedEnum@default"]["attributes"][0]["default"] =
-        json!({"present":true,"value":"0001"});
+        json!({"present":true,"value":1});
     let snapshot = parsed(&schema);
     let graph = snapshot.bundle().unwrap();
     assert_eq!(
@@ -1083,7 +1083,7 @@ fn any_attribute_rule_is_validated_like_ruby_and_typed() {
 fn ruby_r2_refusal_cases_match_ruby() {
     let cases: Vec<Value> =
         serde_json::from_str(include_str!("fixtures/r2_refusals.json")).unwrap();
-    assert_eq!(cases.len(), 97);
+    assert_eq!(cases.len(), 103);
     let mut failures = Vec::new();
     for case in &cases {
         let name = case["name"].as_str().unwrap();
@@ -1091,11 +1091,6 @@ fn ruby_r2_refusal_cases_match_ruby() {
         match (load(input, InputFormat::Json), case["expect"].as_object()) {
             (Ok(_), None) => {}
             (Ok(_), Some(_)) => failures.push(format!("{name}: accepted, Ruby refuses")),
-            // Rust additionally type-checks defaults: the depth-99/100 controls put an array
-            // under a string attribute, so Rust refuses on the type, never on nesting.
-            (Err(e), None)
-                if name.starts_with("doc_depth_")
-                    && e.reason == ErrorReason::NonSerializableDefault => {}
             (Err(e), None) => failures.push(format!(
                 "{name}: refused {:?} at {}, Ruby accepts",
                 e.reason, e.location
