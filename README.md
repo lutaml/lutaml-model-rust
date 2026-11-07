@@ -1,1 +1,1 @@
-# lutaml-model-rust
+# lutaml-rs
